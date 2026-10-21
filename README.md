@@ -39,6 +39,10 @@ Two hard rules govern everything in this repo:
 ├── scripts/                # setup / check / test / inspection helpers
 │   ├── setup_env.sh            # install torch, torchvision, deps
 │   ├── build_torch_scatter.sh  # build torch_scatter from source (see §4)
+│   ├── build_curope.sh         # build the cuRoPE2D CUDA kernel (see §4.1)
+│   ├── patch_curope.py         # relax one over-strict croco assertion
+│   ├── check_curope.py         # verify the kernel and its numerics
+│   ├── bench_curope.py         # CUDA kernel vs pytorch fallback
 │   ├── fetch_dinov2_weights.sh # DINOv2 backbone from an HF mirror (see §4)
 │   ├── check_env.py            # Stage B3 environment verification
 │   ├── make_test_video.py      # Stage D1 synthetic test clip
@@ -59,6 +63,7 @@ Two hard rules govern everything in this repo:
 ├── docs/                   # reports
 │   ├── standalone-test.md
 │   ├── vram-diagnostics.md
+│   ├── curope.md
 │   └── comfyui-install.md       # installation guide for a ComfyUI user
 ├── config.json.example     # optional runtime configuration
 ├── pixi.toml               # isolated environment definition
@@ -91,10 +96,12 @@ pixi install
 # 3.3 install torch 2.8.0+cu129 / torchvision 0.23.0 / torch_scatter / deps
 pixi run bash scripts/setup_env.sh
 pixi run bash scripts/build_torch_scatter.sh   # see §4 for why
+pixi run bash scripts/build_curope.sh           # the CUDA RoPE kernel, see §4.1
 pixi run bash scripts/fetch_dinov2_weights.sh  # see §4 for why
 
 # 3.4 verify the environment
 pixi run python scripts/check_env.py
+pixi run python scripts/check_curope.py
 ```
 
 Everything is installed **inside** `~/trackeverything/.pixi/envs/default`.
@@ -144,6 +151,33 @@ The DINOv2 ViT-S/14 weights are pulled from
 fetches the identical file from the Hugging Face mirror
 `hdtech/dinov2_vits14_pretrain` into the standard torch.hub cache and verifies
 it against the upstream host (exact size + byte-identical prefix).
+
+### 4.1 The cuRoPE2D CUDA kernel
+
+Pi3 can use a compiled CUDA implementation of its 2D rotary position
+embedding. Without it Pi3 prints
+
+```
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+```
+
+`scripts/build_curope.sh` builds the original kernel from
+[croco](https://github.com/naver/croco) (`models/curope`, pinned commit
+`5d4dbc920b4cc0dac66bef0ce6876b58f1c82deb`) for **sm_86** (NVIDIA A40) and
+**sm_89** (RTX 4060 Ti) and installs it in the layout the upstream expects
+(`models.curope` as a namespace package). The upstream source is not modified.
+
+Two things are worth knowing:
+
+* croco's own `setup.py` derives the GPU architectures from *torch's* build
+  list, which does not contain `sm_89` - so the build uses our own
+  arch-explicit `scripts/curope_build/setup.py`.
+* one over-strict assertion in croco's kernel rejects Pi3's attention memory
+  layout; `scripts/patch_curope.py` relaxes exactly that check and leaves the
+  kernel body untouched.
+
+Details, measurements and the fallback behaviour:
+[`docs/curope.md`](docs/curope.md).
 
 ## 5. Model weights
 
@@ -241,6 +275,7 @@ pixi run bash tests/test_e2e.sh
 
 # ComfyUI node tests
 pixi run test-console      # console reporting
+pixi run test-curope      # the cuRoPE2D CUDA kernel
 pixi run test-nodes        # unit tests against a fake worker (no GPU)
 pixi run test-nodes-e2e   # real inference through the Track node
 pixi run test-save-data   # Save Data node
@@ -276,6 +311,8 @@ git-ignored.
   parameters, timings, VRAM, results and known limitations (ТЗ №1).
 * [`docs/vram-diagnostics.md`](docs/vram-diagnostics.md) — per-stage CUDA
   memory measurements of the worker.
+* [`docs/curope.md`](docs/curope.md) — the cuRoPE2D CUDA kernel: how it is
+  built, what it changes numerically and how it compares to the fallback.
 * [`docs/comfyui-install.md`](docs/comfyui-install.md) — **installation guide
   for a ComfyUI user**: environment, models, node installation, configuration,
   first workflow and removal (ТЗ №2).

@@ -89,6 +89,7 @@ ComfyUI's environment.
 cd ~/$USER/trackeverything
 
 # torch 2.8.0+cu129 / torchvision 0.23.0+cu129 / the pinned upstream deps
+# / the cuRoPE2D CUDA kernel
 pixi run bash scripts/setup_env.sh
 
 # torch_scatter (see the note below)
@@ -111,6 +112,35 @@ pixi run bash scripts/fetch_dinov2_weights.sh
 >   `dl.fbaipublicfiles.com`, which is throttled on some networks. The script
 >   fetches the identical file from a Hugging Face mirror and verifies it
 >   against the upstream host.
+
+### 2.3.1 The cuRoPE2D CUDA kernel
+
+Pi3 (the geometry backend) can use a compiled CUDA implementation of its 2D
+rotary position embedding. `scripts/setup_env.sh` builds it as its last step
+(from [croco](https://github.com/naver/croco), pinned commit
+`5d4dbc920b4cc0dac66bef0ce6876b58f1c82deb`) for **sm_86** (NVIDIA A40) and
+**sm_89** (RTX 4060 Ti).
+
+You can also run it on its own:
+
+```bash
+pixi run bash scripts/build_curope.sh
+```
+
+Verify it:
+
+```bash
+pixi run python scripts/check_curope.py
+```
+
+```
+[PASS] the upstream binds RoPE2D to the CUDA implementation
+[PASS] the fallback warning is not printed
+```
+
+If the build fails, nothing breaks: Pi3 falls back to its pure-pytorch
+implementation and prints the original warning. Details and the measured
+comparison are in [`curope.md`](curope.md).
 
 ### 2.4 Verify the environment
 
@@ -408,9 +438,11 @@ touch the ComfyUI process):
 ```bash
 cd ~/$USER/trackeverything
 pixi run python scripts/check_env.py            # environment
+pixi run python scripts/check_curope.py          # the CUDA RoPE kernel
 pixi run python tests/test_comfy_nodes.py        # nodes (fake worker, no GPU)
 pixi run python tests/test_save_data.py          # Save Data
 pixi run python tests/test_visualize.py          # Visualize
+pixi run python tests/test_curope.py             # the cuRoPE2D kernel
 ```
 
 If the nodes do not appear in ComfyUI, check the ComfyUI console for an

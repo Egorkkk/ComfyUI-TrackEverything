@@ -1,0 +1,149 @@
+{
+  "frames_dir": "outputs/_frames_test",
+  "max_frames": 8,
+  "cuda": {
+    "rope_implementation": "cuda",
+    "timings": {
+      "load_model_seconds": 1.989,
+      "load_geometry_seconds": 6.989,
+      "inference_seconds": 2.966,
+      "save_seconds": 0.054
+    },
+    "peak_vram_mib": 6112.16064453125,
+    "wall_clock_seconds": 13.542,
+    "num_tracks": 2409,
+    "photometric_error": 0.14150365548474447
+  },
+  "fallback": {
+    "rope_implementation": "fallback",
+    "timings": {
+      "load_model_seconds": 1.92,
+      "load_geometry_seconds": 6.9,
+      "inference_seconds": 3.02,
+      "save_seconds": 0.048
+    },
+    "peak_vram_mib": 6112.22705078125,
+    "wall_clock_seconds": 13.433,
+    "num_tracks": 2415,
+    "photometric_error": 0.14187999282564437
+  },
+  "photometric_error_delta": -0.000376337340899896,
+  "comparisons": [
+    {
+      "name": "geometry.pt.depths",
+      "comparable": true,
+      "shape": [
+        8,
+        384,
+        512
+      ],
+      "max_abs_diff": 0.0026513338088989258,
+      "rel": 0.002525680954973358
+    },
+    {
+      "name": "geometry.pt.extrinsics",
+      "comparable": true,
+      "shape": [
+        8,
+        4,
+        4
+      ],
+      "max_abs_diff": 0.0005526961758732796,
+      "rel": 0.0005526961758732796
+    },
+    {
+      "name": "geometry.pt.intrinsics",
+      "comparable": true,
+      "shape": [
+        8,
+        3,
+        3
+      ],
+      "max_abs_diff": 1.7418212890625,
+      "rel": 0.0023667965759159664
+    },
+    {
+      "name": "geometry.pt.norm_factor",
+      "comparable": false
+    },
+    {
+      "name": "tracks.pt.cell_to_token",
+      "comparable": true,
+      "shape": [
+        8,
+        96,
+        128
+      ],
+      "max_abs_diff": 2197.0,
+      "rel": 0.9123754152823921
+    },
+    {
+      "name": "tracks.pt.coords",
+      "comparable": false,
+      "shape_a": [
+        2409,
+        8,
+        3
+      ],
+      "shape_b": [
+        2415,
+        8,
+        3
+      ]
+    },
+    {
+      "name": "tracks.pt.dyn_logits",
+      "comparable": false,
+      "shape_a": [
+        2409,
+        8
+      ],
+      "shape_b": [
+        2415,
+        8
+      ]
+    },
+    {
+      "name": "tracks.pt.src_time",
+      "comparable": false,
+      "shape_a": [
+        2409
+      ],
+      "shape_b": [
+        2415
+      ]
+    },
+    {
+      "name": "tracks.pt.src_x",
+      "comparable": false,
+      "shape_a": [
+        2409
+      ],
+      "shape_b": [
+        2415
+      ]
+    },
+    {
+      "name": "tracks.pt.src_y",
+      "comparable": false,
+      "shape_a": [
+        2409
+      ],
+      "shape_b": [
+        2415
+      ]
+    },
+    {
+      "name": "tracks.pt.visibs",
+      "comparable": false,
+      "shape_a": [
+        2409,
+        8
+      ],
+      "shape_b": [
+        2415,
+        8
+      ]
+    }
+  ]
+}
