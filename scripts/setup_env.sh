@@ -22,14 +22,32 @@ echo "==> [1/3] torch + torchvision (cu129)"
 python -m pip install --upgrade pip
 python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url "${PYTORCH_INDEX}"
 
-echo "==> [2/3] torch_scatter (prebuilt for torch 2.8.0+cu129)"
-python -m pip install torch_scatter -f "${PYG_LINKS}"
+echo "==> [2/3] torch_scatter"
+# Preferred path: the prebuilt wheel for torch 2.8.0+cu129.
+# NOTE: data.pyg.org is throttled to ~16 KiB per connection from this host,
+# so this step is only attempted when the extension is not already present.
+# The fallback (build the identical 2.1.2 sources locally) is
+# scripts/build_torch_scatter.sh.
+if python -c "import torch_scatter, torch; assert torch.__version__.startswith('2.8.0')" 2>/dev/null; then
+  echo "    torch_scatter already installed - skipping"
+else
+  python -m pip install --resume-retries 10 --timeout 120 torch_scatter -f "${PYG_LINKS}" \
+    || echo "    !! prebuilt wheel unavailable, run scripts/build_torch_scatter.sh instead"
+fi
 
 echo "==> [3/3] remaining pinned requirements"
 # requirements.txt already carries --extra-index-url (pytorch cu129) and
-# --find-links (pyg cu129), so torch/torch_scatter resolve to the exact
-# pinned local versions and are left untouched if already installed.
-python -m pip install -r "${REQS}"
+# --find-links (pyg cu129), so torch/torchvision resolve to the exact pinned
+# local versions and are left untouched if already installed.
+#
+# torch_scatter is skipped here on purpose: the pin in requirements.txt is
+# "==2.1.2+pt28cu129" (a prebuilt-wheel local version tag) which cannot be
+# satisfied by the locally compiled extension (version "2.1.2"). It is
+# installed by scripts/build_torch_scatter.sh instead. See README §4.
+REQ_TMP="$(mktemp)"
+grep -vE '^torch_scatter' "${REQS}" > "${REQ_TMP}"
+python -m pip install --resume-retries 10 --timeout 120 -r "${REQ_TMP}"
+rm -f "${REQ_TMP}"
 
 echo "==> done"
 python -m pip list 2>/dev/null | grep -iE "^(torch|torchvision|torch-scatter|torch_scatter|numpy|transformers|huggingface-hub|opencv|imageio|av) " || true

@@ -14,6 +14,23 @@ platforms = ["linux-64"]
 python = "3.10.*"
 pip = "*"
 
+# ---------------------------------------------------------------------------
+# CUDA compiler - used ONLY to compile the `torch_scatter` extension from
+# source (see scripts/build_torch_scatter.sh).
+#
+# The upstream README installs `torch_scatter` from the prebuilt PyG wheel
+# index (https://data.pyg.org/whl/torch-2.8.0+cu129.html). That host is
+# throttled to ~16 KiB per connection from this machine, so the wheel cannot
+# be fetched in reasonable time. We therefore compile the exact same upstream
+# version (2.1.2) against the same Torch 2.8.0+cu129 build.
+#
+# nvcc is not used at inference time.
+# ---------------------------------------------------------------------------
+cuda-nvcc = "12.9.*"
+cuda-cudart-dev = "12.9.*"
+cuda-cccl = "12.9.*"
+cuda-libraries-dev = "12.9.*"
+
 # The upstream project additionally needs the deformable-attention CUDA
 # extension (libs/ops) for TRAINING only. Inference does not require it,
 # so it is deliberately not built here.
@@ -24,15 +41,19 @@ pip = "*"
 # so it is deliberately not built here.
 
 [tasks]
+# The upstream repository *is* the `trackeverything` package, so its PARENT
+# directory (external/) has to be importable.
+env-check-env = { cmd = "echo $PYTHONPATH" }
+
 # --- environment ------------------------------------------------------------
 env-info = { cmd = "python -c \"import sys,torch;print(sys.version);print('torch',torch.__version__,'cuda',torch.version.cuda)\"", description = "Print Python/Torch/CUDA versions" }
 
 # --- checks -----------------------------------------------------------------
-check-env = { cmd = "python scripts/check_env.py", description = "Verify torch/CUDA/torch_scatter/TrackEverything imports" }
+check-env = { cmd = "python scripts/check_env.py", env = { PYTHONPATH = "$PIXI_PROJECT_ROOT/external" }, description = "Verify torch/CUDA/torch_scatter/TrackEverything imports" }
 
 # --- inference --------------------------------------------------------------
 make-test-video = { cmd = "python scripts/make_test_video.py", description = "Generate the synthetic test clip" }
-infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --mem_efficient --max_frames 16", description = "Run standalone inference (Pi3 geometry backend)" }
+infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --mem_efficient --max_frames 16", env = { PYTHONPATH = "$PIXI_PROJECT_ROOT/external" }, description = "Run standalone inference (Pi3 geometry backend)" }
 
 # --- verification -----------------------------------------------------------
 inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone", description = "Inspect tracks.pt / geometry.pt" }
