@@ -280,6 +280,34 @@ Load Video ──▶ TrackEverything Track ──▶ TrackEverything Save Data
 6. Queue the workflow. The Save Data node shows the resulting path in the
    ComfyUI UI.
 
+**What the ComfyUI console shows while the workflow runs**
+
+Both workers print a stage-by-stage report and the ComfyUI console streams it
+live:
+
+```
+[1/4] loading the TrackEverything checkpoint
+       done in 2.19 s   520.8 MiB on disk
+[2/4] loading the pi3 geometry backend
+       done in 6.71 s
+[3/4] estimating geometry and tracking points
+       -> geometry estimation
+       geometry                   elapsed    1.0s    8.11 frames/s
+       chunk 1/1   elapsed    1.6s   0.61 chunks/s
+       -> tracking (dense)
+       tracking                   elapsed    0.6s   13.34 frames/s
+       done in 3.01 s   16 frames, 2.65 frames/s, 1 geometry chunk(s)
+[4/4] saving tracks.pt and geometry.pt
+       done in 0.05 s   7.2 MiB written
+```
+
+The progress of the geometry phase is **real** — the upstream annotator
+processes the video chunk by chunk and the worker counts the finished chunks.
+The heartbeat line shows the elapsed time and the current rate in frames/s.
+
+The same text is written to `worker.log` in the result directory, so the
+report survives the ComfyUI restart.
+
 ### 7.2 Visualization (no repeated inference)
 
 ```

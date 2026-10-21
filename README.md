@@ -32,7 +32,8 @@ Two hard rules govern everything in this repo:
 ├── worker/                 # runs inside the isolated environment
 │   ├── __init__.py
 │   ├── runner.py               # calls the original upstream demo_hf
-│   └── visualize.py            # calls the original upstream renderer (CPU)
+│   ├── visualize.py            # calls the original upstream renderer (CPU)
+│   └── console.py              # stage reporting, progress bars and rates
 ├── external/
 │   └── trackeverything/    # upstream, Git submodule (read-only, pinned)
 ├── scripts/                # setup / check / test / inspection helpers
@@ -239,6 +240,7 @@ Results are never converted to JSON or any other lossy format.
 pixi run bash tests/test_e2e.sh
 
 # ComfyUI node tests
+pixi run test-console      # console reporting
 pixi run test-nodes        # unit tests against a fake worker (no GPU)
 pixi run test-nodes-e2e   # real inference through the Track node
 pixi run test-save-data   # Save Data node
@@ -334,6 +336,64 @@ export TRACKEVERYTHING_WORKER_PYTHON=~/trackeverything/.pixi/envs/default/bin/py
 ```
 
 Full instructions: [`docs/comfyui-install.md`](docs/comfyui-install.md).
+
+## 10.1 Console output
+
+Both workers print a stage-by-stage report, and the ComfyUI console streams it
+live while the run is happening. The same text is kept in `worker.log` next to
+the results.
+
+```
+==========================================================================
+ TrackEverything - standalone inference
+==========================================================================
+   device          : NVIDIA GeForce RTX 4060 Ti
+   model           : katefgroup/TrackEverything
+   geometry        : pi3
+   pi3             : yyfz233/Pi3
+   frames          : 16 @ 384x256
+   mode            : dense, 3 iterations
+   voxel size      : 0.02
+   mem efficient   : True
+   output          : /home/egorkkk/ComfyUI/output/trackeverything_20250101-120000
+==========================================================================
+
+[1/4] loading the TrackEverything checkpoint
+       demo_hf: Downloading model from HuggingFace Hub: katefgroup/TrackEverything
+       done in 2.19 s   520.8 MiB on disk
+
+[2/4] loading the pi3 geometry backend
+       done in 6.71 s
+
+[3/4] estimating geometry and tracking points
+       demo_hf: Estimating geometry with pi3 (16 frames)...
+       -> geometry estimation
+       geometry                   elapsed    1.0s    8.11 frames/s
+       chunk 1/1   elapsed    1.6s   0.61 chunks/s
+       -> tracking (dense)
+       tracking                   elapsed    0.6s   13.34 frames/s
+       done in 3.01 s   16 frames, 2.65 frames/s, 1 geometry chunk(s)
+
+[4/4] saving tracks.pt and geometry.pt
+       done in 0.05 s   7.2 MiB written
+
+==========================================================================
+   result          : /home/egorkkk/ComfyUI/output/trackeverything_20250101-120000
+   tracks          : 2703
+   frames          : 16
+   total           : 13.52 s
+   peak VRAM       : 6.0 GiB allocated / 6.1 GiB reserved
+==========================================================================
+```
+
+The geometry phase reports **real** progress: the upstream annotator processes
+the video chunk by chunk, and the worker counts the finished chunks (the
+upstream source is not modified). The heartbeat line shows the elapsed time
+and the current rate in frames/s; on a TTY it is rewritten in place, in a pipe
+it is emitted as a normal line every couple of seconds.
+
+The visualization worker reports the same way (loading, preparing the scene,
+rendering, writing the frames) and states that it runs on the CPU only.
 
 ## 11. Status / known limitations
 
