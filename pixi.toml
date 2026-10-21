@@ -53,7 +53,8 @@ check-env = { cmd = "python scripts/check_env.py", env = { PYTHONPATH = "$PIXI_P
 
 # --- inference --------------------------------------------------------------
 make-test-video = { cmd = "python scripts/make_test_video.py", description = "Generate the synthetic test clip" }
-infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --mem_efficient --max_frames 16", env = { PYTHONPATH = "$PIXI_PROJECT_ROOT/external" }, description = "Run standalone inference (Pi3 geometry backend)" }
+infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone_16f --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --mem_efficient --max_frames 16", env = { PYTHONPATH = "$PIXI_PROJECT_ROOT/external" }, description = "Run standalone inference via the original upstream CLI" }
+infer-wrapped = { cmd = "python scripts/run_inference.py --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone_16f --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --max_frames 16", description = "Same, plus wall-clock and peak VRAM measurement" }
 
 # --- verification -----------------------------------------------------------
 inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone", description = "Inspect tracks.pt / geometry.pt" }

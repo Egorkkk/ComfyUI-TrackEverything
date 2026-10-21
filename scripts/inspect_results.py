@@ -162,7 +162,11 @@ def inspect(tracks_path: Path, geometry_path: Path) -> list[str]:
     if extr is not None:
         stats_block("extrinsics (T,4,4)", extr)
     if norm is not None:
-        stats_block("norm_factor", norm.reshape(-1) if norm.dim() else norm, sentinel_mask=False)
+        if isinstance(norm, torch.Tensor):
+            stats_block("norm_factor", norm.reshape(-1) if norm.dim() else norm, sentinel_mask=False)
+        else:
+            print(f"  [norm_factor]\n    type            : {type(norm).__name__}\n"
+                  f"    value           : {norm!r}")
 
     # -------------------------------------------------------------------
     # consistency checks
@@ -178,26 +182,30 @@ def inspect(tracks_path: Path, geometry_path: Path) -> list[str]:
             problems.append(f"{label}: {detail}")
 
     # 1. frame count agreement
+    # NOTE: the frame axis differs per tensor:
+    #   visibs / dyn_logits -> (N, T)      frame axis = 1
+    #   cell_to_token      -> (T, H', W')  frame axis = 0
+    #   depths/intr/extr   -> (T, ...)     frame axis = 0
     n_tracks = None
     n_frames = None
     if coords is not None and coords.dim() == 3:
         n_tracks, n_frames = coords.shape[0], coords.shape[1]
         print(f"    reference: T={n_frames} frames, N={n_tracks} tracks")
 
-    for name, t, expect_T in (
-        ("visibs", visibs, n_frames),
-        ("dyn_logits", dyn, n_frames),
-        ("cell_to_token", c2t, n_frames),
-        ("depths", depths, n_frames),
-        ("intrinsics", intr, n_frames),
-        ("extrinsics", extr, n_frames),
+    for name, t, axis in (
+        ("visibs", visibs, 1),
+        ("dyn_logits", dyn, 1),
+        ("cell_to_token", c2t, 0),
+        ("depths", depths, 0),
+        ("intrinsics", intr, 0),
+        ("extrinsics", extr, 0),
     ):
-        if t is None or expect_T is None:
+        if t is None or n_frames is None:
             continue
         check(
             f"frame count agrees: {name}",
-            t.shape[0] == expect_T,
-            f"{name}.shape[0]={t.shape[0]} vs T={expect_T}",
+            t.shape[axis] == n_frames,
+            f"{name}.shape[{axis}]={t.shape[axis]} vs T={n_frames}",
         )
 
     if coords is not None and visibs is not None:
