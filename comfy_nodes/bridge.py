@@ -225,8 +225,14 @@ def run_worker(
     *,
     timeout: Optional[float] = None,
     cwd: Optional[Path] = None,
+    stream_console: bool = True,
 ) -> WorkerResult:
-    """Run the worker and capture its output into ``worker.log``."""
+    """Run the worker and capture its output into ``worker.log``.
+
+    The worker's output is streamed to the ComfyUI console as it arrives, so
+    the user sees the stage-by-stage progress of the run (model loading,
+    geometry estimation, tracking, saving) while it is happening.
+    """
     assert_isolated(cfg)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -278,10 +284,16 @@ def run_worker(
                     continue
                 if key.data == "stdout":
                     stdout_chunks.append(chunk)
+                    marker = ""
                 else:
                     stderr_chunks.append(chunk)
+                    marker = "[error] "
                 log_file.write(chunk.encode("utf-8"))
                 log_file.flush()
+                if stream_console:
+                    # live in the ComfyUI console
+                    sys.stdout.write(marker + chunk)
+                    sys.stdout.flush()
         sel.close()
 
         for stream in (proc.stdout, proc.stderr):
@@ -639,6 +651,11 @@ def run_track(
 
     try:
         frame_names = write_frames(batch, frames_dir)
+        print(
+            f"[TrackEverything] {batch.num_frames} frames "
+            f"({batch.original_size['width']}x{batch.original_size['height']}) "
+            f"-> running the inference worker"
+        )
         argv = build_worker_argv(
             cfg,
             frames_dir,
@@ -695,6 +712,10 @@ def run_track(
         metadata = build_metadata(cfg, batch, params, worker, result_dir)
         (result_dir / METADATA_FILENAME).write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
+        )
+        print(
+            f"[TrackEverything] inference finished in "
+            f"{worker.wall_clock_seconds:.1f}s -> {result_dir}"
         )
         return build_track_data(result_dir, metadata)
 
@@ -1016,6 +1037,10 @@ def visualize_result(
             source_frames = batch
 
         out_dir = tmp_root / "rendered"
+        print(
+            f"[TrackEverything] rendering {track_data.num_tracks} tracks"
+            + (f" over {source_frames.num_frames} frames" if source_frames else "")
+        )
         argv = build_visualizer_argv(
             cfg,
             result_dir,
@@ -1050,6 +1075,10 @@ def visualize_result(
             f"TrackEverything visualized {tensor.shape[0]} frames "
             f"({tensor.shape[2]}x{tensor.shape[1]}), "
             f"{track_data.num_tracks} tracks"
+        )
+        print(
+            f"[TrackEverything] visualization finished in "
+            f"{worker.wall_clock_seconds:.1f}s"
         )
         print(message)
 
