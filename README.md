@@ -66,6 +66,7 @@ pixi install
 # 3.3 install torch 2.8.0+cu129 / torchvision 0.23.0 / torch_scatter / deps
 pixi run bash scripts/setup_env.sh
 pixi run bash scripts/build_torch_scatter.sh   # see §4 for why
+pixi run bash scripts/fetch_dinov2_weights.sh  # see §4 for why
 
 # 3.4 verify the environment
 pixi run python scripts/check_env.py
@@ -84,7 +85,14 @@ pixi shell                 # interactive shell inside the env
 
 `pixi shell` is the recommended way to work interactively.
 
-## 4. `torch_scatter` — why it is built from source
+## 4. Two upstream downloads that had to be re-routed
+
+From this machine two upstream asset hosts are throttled to **~16 KiB per
+connection** and then stall (measured ~0.8 KB/s, while
+`download.pytorch.org`, `huggingface.co` and PyPI reach 40 MB/s from the same
+host). Both are re-routed **without changing any algorithm**:
+
+### 4.1 `torch_scatter` — built from source
 
 The upstream README installs the prebuilt wheel:
 
@@ -92,18 +100,25 @@ The upstream README installs the prebuilt wheel:
 pip install torch_scatter -f https://data.pyg.org/whl/torch-2.8.0+cu129.html
 ```
 
-From this machine `data.pyg.org` is throttled to roughly **16 KiB per
-connection** and then stalls (measured ~0.8 KB/s, while `download.pytorch.org`
-reaches ~40 MB/s from the same host). No mirror of the PyG wheel index carries
-`torch_scatter`, and PyPI only ships an sdist for `torch-scatter` 2.1.2.
+`data.pyg.org` is throttled as described above. No mirror of the PyG wheel
+index carries `torch_scatter`, and PyPI only ships an sdist for
+`torch-scatter` 2.1.2.
 
-`scripts/build_torch_scatter.sh` therefore compiles **the same upstream
-version (2.1.2, unmodified sdist from PyPI)** against **the same Torch build
+`scripts/build_torch_scatter.sh` therefore compiles **the same upstream version
+(2.1.2, unmodified sdist from PyPI)** against **the same Torch build
 (2.8.0+cu129)** using `nvcc 12.9` from the pixi environment. The result is
-numerically equivalent to the official wheel — it is the same C++/CUDA source.
+numerically equivalent to the official wheel — it is the same C++/CUDA sources.
 
 If `data.pyg.org` becomes reachable, the canonical command works unchanged and
 `scripts/setup_env.sh` (step 2) will use it.
+
+### 4.2 DINOv2 backbone — fetched from a Hugging Face mirror
+
+The DINOv2 ViT-S/14 weights are pulled from
+`dl.fbaipublicfiles.com` (same throttling). `scripts/fetch_dinov2_weights.sh`
+fetches the identical file from the Hugging Face mirror
+`hdtech/dinov2_vits14_pretrain` into the standard torch.hub cache and verifies
+it against the upstream host (exact size + byte-identical prefix).
 
 ## 5. Model weights
 
@@ -131,40 +146,51 @@ The upstream CLI also accepts `--token`, but exporting `HF_TOKEN` is preferred.
 # 6.1 make the test clip (16 frames, 384x256, synthetic)
 pixi run python scripts/make_test_video.py
 
-# 6.2 run the ORIGINAL upstream CLI
+# 6.2a run the ORIGINAL upstream CLI directly
 cd ~/trackeverything
 PYTHONPATH="$PWD/external" pixi run python -m trackeverything.demo_hf \
   --video test_data/synthetic_16f.mp4 \
-  --output_dir outputs/standalone \
+  --output_dir outputs/standalone_16f \
   --geometry_backend pi3 \
   --mode dense \
   --num_iters 3 \
   --voxel_size 0.02 \
   --mem_efficient \
   --max_frames 16
+
+# 6.2b same thing through a wrapper that also records time and peak VRAM
+pixi run python scripts/run_inference.py \
+  --video test_data/synthetic_16f.mp4 \
+  --output_dir outputs/standalone_16f \
+  --geometry_backend pi3 --mode dense \
+  --num_iters 3 --voxel_size 0.02 --max_frames 16
 ```
 
 Notes:
 
 * `PYTHONPATH` must contain `external/` — the upstream repo *is* the
   `trackeverything` package, so its **parent** directory has to be importable.
+  `scripts/run_inference.py` sets this automatically.
 * `--geometry_backend pi3` is used deliberately. The upstream default is
   `vggt_omega`, whose checkpoint path is hard-coded to the authors' private
   infrastructure (`/data/group_data/katefgroup/...`).
 * `--save_dense` is **not** enabled on the first run: dense trajectories grow
   quadratically with the sequence length and easily exhaust VRAM.
+* `--mem_efficient` is an upstream `BooleanOptionalAction` flag — it takes no
+  value; `--no-mem_efficient` disables it.
 
-Outputs written to `outputs/standalone/`:
+Outputs written to `outputs/standalone_16f/`:
 
 | File | Content |
 |---|---|
 | `tracks.pt` | `coords`, `visibs`, `dyn_logits`, `src_time`, `src_y`, `src_x`, `cell_to_token` |
 | `geometry.pt` | `depths`, `intrinsics`, `extrinsics`, `norm_factor` |
+| `run_report.json` | run metadata only (command, wall clock, peak VRAM) — no tensors |
 
 ## 7. Inspect the results
 
 ```bash
-pixi run python scripts/inspect_results.py outputs/standalone
+pixi run python scripts/inspect_results.py outputs/standalone_16f
 ```
 
 The script prints shapes, dtypes and statistics for every tensor and then
