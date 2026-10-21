@@ -152,6 +152,37 @@ def main() -> None:
     report_path = out_dir / "run_report.json"
     report_path.write_text(json.dumps(report, indent=2))
 
+    # Also write a metadata.json so the result can be consumed directly by
+    # the ComfyUI nodes (the same layout the Track node produces).
+    try:
+        sys.path.insert(0, str(REPO_ROOT))
+        from comfy_nodes.bridge import synthesize_metadata
+
+        metadata = synthesize_metadata(out_dir)
+        metadata["inference"] = {
+            "mode": args.mode,
+            "geometry_backend": args.geometry_backend,
+            "num_iters": args.num_iters,
+            "voxel_size": args.voxel_size,
+            "mem_efficient": True,
+            "device": args.device,
+            "max_frames": args.max_frames,
+            "frame_stride": args.frame_stride,
+            "start_frame": args.start_frame,
+        }
+        metadata["worker"] = {
+            "command": cmd,
+            "returncode": proc.returncode,
+            "wall_clock_seconds": round(elapsed, 2),
+            "log": "run_report.json",
+            "pid_isolated": False,
+        }
+        metadata["files"]["metadata"] = "metadata.json"
+        (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+        print(f"  metadata written to       : {out_dir / 'metadata.json'}")
+    except Exception as exc:  # noqa: BLE001 - never fail the run for this
+        print(f"  (could not write metadata.json: {exc!r})")
+
     print()
     print("=" * 78)
     print("RUN REPORT")

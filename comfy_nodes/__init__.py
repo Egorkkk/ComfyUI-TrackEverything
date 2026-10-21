@@ -10,13 +10,21 @@ delegated to the isolated worker process.
 
 from __future__ import annotations
 
-from .bridge import TrackEverythingError, load_result_dir, run_track
+from .bridge import (
+    TrackEverythingError,
+    load_result_dir,
+    run_track,
+    save_result,
+    visualize_result,
+)
 from .config import Config, ConfigurationError, assert_isolated
 from .nodes import (
     NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS,
     TrackEverythingLoadData,
+    TrackEverythingSaveData,
     TrackEverythingTrack,
+    TrackEverythingVisualize,
 )
 from .types import TrackData
 
@@ -24,7 +32,9 @@ __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
     "TrackEverythingLoadData",
+    "TrackEverythingSaveData",
     "TrackEverythingTrack",
+    "TrackEverythingVisualize",
     "TrackData",
     "TrackEverythingError",
     "ConfigurationError",
@@ -32,4 +42,6 @@ __all__ = [
     "assert_isolated",
     "load_result_dir",
     "run_track",
+    "save_result",
+    "visualize_result",
 ]

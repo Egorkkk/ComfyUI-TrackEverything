@@ -21,7 +21,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .bridge import TrackEverythingError, load_result_dir, run_track
+from .bridge import (
+    TrackEverythingError,
+    load_result_dir,
+    run_track,
+    save_result,
+    visualize_result,
+)
 from .config import Config, ConfigurationError
 
 #: ComfyUI widgets for a boolean defaulting to True.
@@ -120,19 +126,156 @@ class TrackEverythingLoadData:
         return (load_result_dir(result_dir),)
 
 
+class TrackEverythingSaveData:
+    """Persist a TrackEverything result set.
+
+    ``reference`` keeps the files where they are (nothing is copied) and
+    reports the location. ``copy`` duplicates ``tracks.pt``, ``geometry.pt``
+    and ``metadata.json`` - byte for byte - into a fresh directory under
+    ComfyUI's output directory.
+
+    The node only touches files: it loads no model and never uses CUDA.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "track_data": ("TRACK_DATA",),
+                "save_mode": (["reference", "copy"], {"default": "reference"}),
+                "filename_prefix": ("STRING", {"default": "trackeverything"}),
+            },
+        }
+
+    RETURN_TYPES = ("TRACK_DATA",)
+    RETURN_NAMES = ("track_data",)
+    FUNCTION = "save"
+    CATEGORY = "TrackEverything"
+    DESCRIPTION = (
+        "Save a TrackEverything result. 'reference' keeps the original files, "
+        "'copy' writes a byte-identical copy into ComfyUI's output directory."
+    )
+    OUTPUT_NODE = True
+
+    def save(
+        self,
+        track_data: TrackData,
+        save_mode: str = "reference",
+        filename_prefix: str = "trackeverything",
+    ) -> dict:
+        if track_data is None:
+            raise TrackEverythingError("No track_data received.")
+
+        try:
+            config = Config.resolve()
+        except ConfigurationError as exc:
+            raise TrackEverythingError(str(exc)) from exc
+
+        saved, message = save_result(
+            track_data,
+            save_mode=save_mode,
+            filename_prefix=filename_prefix,
+            output_root=config.output_root,
+        )
+
+        # ComfyUI's standard way of surfacing a text line in the UI.
+        return {"ui": {"text": [message]}, "result": (saved,)}
+
+
+class TrackEverythingVisualize:
+    """Render the 2D track overlay of a TrackEverything result.
+
+    Reads the saved ``tracks.pt`` / ``geometry.pt`` and draws the tracks with
+    the original upstream renderer - in a separate, CPU-only worker process.
+    No model is loaded and no inference is run.
+
+    Connect the original ``IMAGE`` batch to ``images`` to draw the tracks on
+    top of the footage; without it the background is black and the render
+    resolution is the one recorded in the metadata.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "track_data": ("TRACK_DATA",),
+                "max_points": ("INT", {"default": 5000, "min": 1, "max": 200000,
+                                       "step": 100}),
+                "trail_length": ("INT", {"default": 8, "min": 1, "max": 512,
+                                         "step": 1}),
+                "visibility_threshold": ("FLOAT", {"default": 0.5, "min": 0.0,
+                                                   "max": 1.0, "step": 0.01}),
+                "dynamic_threshold": ("FLOAT", {"default": 0.5, "min": 0.0,
+                                                "max": 1.0, "step": 0.01}),
+                "background_opacity": ("FLOAT", {"default": 0.7, "min": 0.0,
+                                                 "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "images": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("images",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "visualize"
+    CATEGORY = "TrackEverything"
+    DESCRIPTION = (
+        "Draw the tracked points and their trails with the upstream renderer. "
+        "Reads a saved result - no model is loaded and no inference is run."
+    )
+    OUTPUT_NODE = False
+
+    def visualize(
+        self,
+        track_data: TrackData,
+        max_points: int = 5000,
+        trail_length: int = 8,
+        visibility_threshold: float = 0.5,
+        dynamic_threshold: float = 0.5,
+        background_opacity: float = 0.7,
+        images: Any = None,
+    ) -> tuple:
+        if track_data is None:
+            raise TrackEverythingError("No track_data received.")
+
+        try:
+            config = Config.resolve()
+            config.validate()
+        except ConfigurationError as exc:
+            raise TrackEverythingError(str(exc)) from exc
+
+        (rendered,) = visualize_result(
+            config,
+            track_data,
+            images=images,
+            max_points=int(max_points),
+            trail_length=int(trail_length),
+            visibility_threshold=float(visibility_threshold),
+            dynamic_threshold=float(dynamic_threshold),
+            background_opacity=float(background_opacity),
+        )
+        return (rendered,)
+
+
 NODE_CLASS_MAPPINGS = {
     "TrackEverythingTrack": TrackEverythingTrack,
     "TrackEverythingLoadData": TrackEverythingLoadData,
+    "TrackEverythingSaveData": TrackEverythingSaveData,
+    "TrackEverythingVisualize": TrackEverythingVisualize,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "TrackEverythingTrack": "TrackEverything Track",
     "TrackEverythingLoadData": "TrackEverything Load Data",
+    "TrackEverythingSaveData": "TrackEverything Save Data",
+    "TrackEverythingVisualize": "TrackEverything Visualize",
 }
 
 __all__ = [
     "TrackEverythingTrack",
     "TrackEverythingLoadData",
+    "TrackEverythingSaveData",
+    "TrackEverythingVisualize",
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
 ]

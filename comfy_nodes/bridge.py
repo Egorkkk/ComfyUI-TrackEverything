@@ -350,6 +350,125 @@ def _read_tracks_shapes(tracks_path: Path) -> dict:
     return shapes
 
 
+def synthesize_metadata(result_dir: Path) -> dict:
+    """Build a minimal metadata for a result set that has no ``metadata.json``.
+
+    The standalone inference pipeline writes only ``tracks.pt`` and
+    ``geometry.pt``. Those two files are enough to visualize and to inspect a
+    result, so the nodes accept them and describe them on the fly. The result
+    is clearly marked with ``"metadata_source": "synthesized"``.
+    """
+    import torch
+
+    tracks_path = result_dir / TRACKS_FILENAME
+    geometry_path = result_dir / GEOMETRY_FILENAME
+
+    try:
+        tracks = torch.load(tracks_path, map_location="cpu", weights_only=True)
+    except Exception:
+        tracks = torch.load(tracks_path, map_location="cpu", weights_only=False)
+    try:
+        geometry = torch.load(geometry_path, map_location="cpu", weights_only=True)
+    except Exception:
+        geometry = torch.load(geometry_path, map_location="cpu", weights_only=False)
+
+    coords = tracks.get("coords")
+    num_tracks = int(coords.shape[0]) if coords is not None else None
+    num_frames = int(coords.shape[1]) if coords is not None else None
+
+    depths = geometry.get("depths")
+    working = (
+        {"width": int(depths.shape[2]), "height": int(depths.shape[1])}
+        if depths is not None else None
+    )
+
+    metadata = {
+        "schema_version": SCHEMA_VERSION,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "producer": "comfy_nodes.bridge.synthesize_metadata",
+        "metadata_source": "synthesized",
+        "note": (
+            "metadata.json was not part of this result set - the description "
+            "below was derived from tracks.pt / geometry.pt"
+        ),
+        "inference": {},
+        "versions": {},
+        "input": {
+            "num_frames": num_frames,
+            "original_size": None,
+            "dtype": "unknown",
+            "value_range": "unknown",
+            "colour_space": "RGB",
+        },
+        "output": {
+            "num_frames": num_frames,
+            "num_tracks": num_tracks,
+            "working_size": working,
+            "feature_grid": (
+                {"height": working["height"] // 4, "width": working["width"] // 4}
+                if working else None
+            ),
+            "patch_size": 4 if working else None,
+            "track_tensor_shapes": {
+                key: (list(value.shape) if hasattr(value, "shape") else None)
+                for key, value in tracks.items()
+            },
+        },
+        "coordinate_transform": {
+            "description": (
+                "3D coordinates live in the upstream scene frame: cam-0 aligned "
+                "and normalised by the median scene distance."
+            ),
+            "world_frame": "camera-0 aligned, scene-normalised",
+            "norm_factor": geometry.get("norm_factor"),
+            "unnormalise": "world_original = coords * norm_factor",
+            "pixel_mapping": {
+                "note": "src_x / src_y are cell indices of the feature grid, not pixels.",
+                "working_px_x": "x_working = src_x * patch_size + (patch_size - 1) / 2",
+                "working_px_y": "y_working = src_y * patch_size + (patch_size - 1) / 2",
+                "original_px_x": "x_original = x_working / scale_x",
+                "original_px_y": "y_working / scale_y",
+            },
+            "projection": {
+                "note": (
+                    "X_cam = R @ X_world + t; p_h = K @ X_cam; "
+                    "x = p_h[0] / p_h[2]; y = p_h[1] / p_h[2]"
+                ),
+                "intrinsics": "geometry.pt['intrinsics'] (T, 3, 3)",
+                "extrinsics": "geometry.pt['extrinsics'] (T, 4, 4)",
+                "depths": "geometry.pt['depths'] (T, H, W)",
+                "intrinsics_are_normalised": True,
+            },
+            "sentinel": {
+                "value": -1000,
+                "meaning": "missing / not-yet-existing trajectory entry - NOT a coordinate",
+            },
+        },
+        "files": {
+            "tracks": TRACKS_FILENAME,
+            "geometry": GEOMETRY_FILENAME,
+            "metadata": METADATA_FILENAME,
+        },
+    }
+    return metadata
+
+
+def read_metadata(result_dir: Path) -> dict:
+    """Read ``metadata.json``, or synthesize it when the file is absent."""
+    metadata_path = Path(result_dir) / METADATA_FILENAME
+    if metadata_path.is_file():
+        try:
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TrackEverythingError(f"Cannot read {metadata_path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise TrackEverythingError(
+                f"{metadata_path} does not contain a JSON object."
+            )
+        return data
+    return synthesize_metadata(Path(result_dir))
+
+
 def build_metadata(
     cfg: Config,
     batch: FrameBatch,
@@ -431,13 +550,26 @@ def build_metadata(
             "projection": {
                 "note": (
                     "Use intrinsics / extrinsics from geometry.pt to project a 3D "
-                    "world point back to pixels: p_cam = R @ p_world + t, then "
-                    "p_norm = K^-1 @ p_cam."
+                    "world point back to pixels: X_cam = R @ X_world + t; "
+                    "p_h = K @ X_cam; x = p_h[0] / p_h[2]; y = p_h[1] / p_h[2]. "
+                    "A point is only in front of the camera when p_h[2] > 0; "
+                    "points behind it must be discarded."
                 ),
+                "formulas": {
+                    "world_to_camera": "X_cam = R @ X_world + t",
+                    "project": "p_h = K @ X_cam",
+                    "divide": "x = p_h[0] / p_h[2]; y = p_h[1] / p_h[2]",
+                    "depth": "z_cam = p_h[2] (must be > 0)",
+                },
                 "intrinsics": "geometry.pt['intrinsics'] (T, 3, 3)",
                 "extrinsics": "geometry.pt['extrinsics'] (T, 4, 4)",
                 "depths": "geometry.pt['depths'] (T, H, W)",
                 "intrinsics_are_normalised": True,
+                "intrinsics_resolution": (
+                    "the intrinsics refer to 'output.working_size'; to use them "
+                    "at another resolution rescale K[0, :] by (W_to - 1) / (W_from - 1) "
+                    "and K[1, :] by (H_to - 1) / (H_from - 1)"
+                ),
             },
             "sentinel": {
                 "value": -1000,
@@ -596,13 +728,11 @@ def load_result_dir(result_dir: Any) -> TrackData:
 
     tracks_path = directory / TRACKS_FILENAME
     geometry_path = directory / GEOMETRY_FILENAME
-    metadata_path = directory / METADATA_FILENAME
 
     missing = [
         name for name, path in (
             (TRACKS_FILENAME, tracks_path),
             (GEOMETRY_FILENAME, geometry_path),
-            (METADATA_FILENAME, metadata_path),
         ) if not path.is_file()
     ]
     if missing:
@@ -610,15 +740,9 @@ def load_result_dir(result_dir: Any) -> TrackData:
             f"Result directory {directory} is missing: {', '.join(missing)}."
         )
 
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise TrackEverythingError(
-            f"Cannot read {metadata_path}: {exc}"
-        ) from exc
-
-    if not isinstance(metadata, dict):
-        raise TrackEverythingError(f"{metadata_path} does not contain a JSON object.")
+    # metadata.json is optional: a result produced by the standalone pipeline
+    # only carries tracks.pt and geometry.pt, and is described on the fly.
+    metadata = read_metadata(directory)
 
     # Sanity check the payload files (header only, no GPU involved).
     for path in (tracks_path, geometry_path):
@@ -632,3 +756,304 @@ def load_result_dir(result_dir: Any) -> TrackData:
             ) from exc
 
     return build_track_data(directory, metadata)
+
+
+# ---------------------------------------------------------------------------
+# saving results
+# ---------------------------------------------------------------------------
+def _rewrite_paths(obj: Any, old_dir: str, new_dir: str) -> Any:
+    """Replace every occurrence of ``old_dir`` inside ``obj`` with ``new_dir``.
+
+    The metadata mixes **relative** names (``"files": {"tracks": "tracks.pt"}``,
+    which stay valid inside the copy) with **absolute** paths (the worker
+    command, the environment description). The absolute ones that point into
+    the source result directory have to follow the copy, otherwise the copy
+    would claim to live where it does not.
+    """
+    if isinstance(obj, str):
+        return obj.replace(old_dir, new_dir)
+    if isinstance(obj, list):
+        return [_rewrite_paths(item, old_dir, new_dir) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _rewrite_paths(value, old_dir, new_dir)
+                for key, value in obj.items()}
+    return obj
+
+
+def _unique_destination(root: Path, prefix: str) -> Path:
+    """A fresh, timestamped directory - never an existing one."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    base = root / prefix if prefix else root
+    candidate = base / f"{prefix or 'trackeverything'}_{stamp}"
+    index = 1
+    while candidate.exists():
+        candidate = base / f"{prefix or 'trackeverything'}_{stamp}_{index:02d}"
+        index += 1
+    return candidate
+
+
+def save_result(
+    track_data: TrackData,
+    *,
+    save_mode: str = "reference",
+    filename_prefix: str = "trackeverything",
+    output_root: Optional[Path] = None,
+) -> tuple[TrackData, str]:
+    """Persist a result set.
+
+    ``reference``
+        Keep the files where they are, verify that they are complete and
+        report the location. Nothing is copied.
+
+    ``copy``
+        Copy ``tracks.pt``, ``geometry.pt``, ``metadata.json`` and the worker
+        log into a **new** directory under the output root. The ``.pt`` files
+        are copied byte for byte - no tensor is converted.
+
+    Returns the (possibly new) :class:`TrackData` and a human readable message.
+    """
+    if save_mode not in ("reference", "copy"):
+        raise TrackEverythingError(
+            f"Unknown save_mode {save_mode!r}; expected 'reference' or 'copy'."
+        )
+
+    source = Path(track_data.result_dir)
+    tracks_path = source / TRACKS_FILENAME
+    geometry_path = source / GEOMETRY_FILENAME
+    metadata_path = source / METADATA_FILENAME
+
+    # tracks.pt and geometry.pt are the payload and must exist; metadata.json
+    # is the description - when it is missing (a result of the standalone
+    # pipeline) it is synthesized from the two tensor files.
+    missing = [
+        name for name, path in (
+            (TRACKS_FILENAME, tracks_path),
+            (GEOMETRY_FILENAME, geometry_path),
+        ) if not path.is_file()
+    ]
+    if missing:
+        raise TrackEverythingError(
+            f"Cannot save: {source} is missing {', '.join(missing)}."
+        )
+    if not metadata_path.is_file():
+        print(
+            f"[TrackEverything] {source} has no metadata.json - the result "
+            f"description is derived from the tensor files."
+        )
+
+    # --- reference mode ---------------------------------------------------
+    if save_mode == "reference":
+        message = (
+            f"TrackEverything result referenced (not copied): {source}  "
+            f"[{track_data.num_tracks} tracks, {track_data.num_frames} frames]"
+        )
+        print(message)
+        return track_data, message
+
+    # --- copy mode ---------------------------------------------------------
+    root = Path(output_root) if output_root else Path(track_data.result_dir).parent
+    prefix = (filename_prefix or "trackeverything").strip().strip(os.sep)
+    destination = _unique_destination(root, prefix)
+    staging = destination.with_name(destination.name + f".tmp-{os.getpid()}")
+
+    try:
+        staging.mkdir(parents=True)
+
+        # byte-for-byte copies - no tensor conversion, no re-serialisation
+        for name in (TRACKS_FILENAME, GEOMETRY_FILENAME):
+            shutil.copy2(source / name, staging / name)
+        if metadata_path.is_file():
+            shutil.copy2(metadata_path, staging / METADATA_FILENAME)
+
+        # the worker log is optional
+        source_log = source / WORKER_LOG_FILENAME
+        if source_log.is_file():
+            shutil.copy2(source_log, staging / WORKER_LOG_FILENAME)
+        source_report = source / WORKER_REPORT_FILENAME
+        if source_report.is_file():
+            shutil.copy2(source_report, staging / WORKER_REPORT_FILENAME)
+
+        # --- metadata: follow the copy, keep the provenance ---------------
+        metadata = read_metadata(source)
+        source_abs = str(source.resolve())
+        destination_abs = str(destination.resolve())
+        metadata = _rewrite_paths(metadata, source_abs, destination_abs)
+        metadata = _rewrite_paths(metadata, str(source), str(destination))
+        metadata["result_dir"] = destination_abs
+        metadata["copy"] = {
+            "source_result_dir": source_abs,
+            "copied_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "copied_by": "TrackEverythingSaveData",
+            "save_mode": "copy",
+            "files_are_byte_identical": True,
+        }
+        metadata.setdefault("files", {})["worker_log"] = WORKER_LOG_FILENAME
+
+        (staging / METADATA_FILENAME).write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
+
+        # only publish the directory once everything is in place
+        staging.rename(destination)
+
+    except Exception:
+        # never leave a half-written directory behind
+        shutil.rmtree(staging, ignore_errors=True)
+        # ... and not an empty parent folder either
+        try:
+            if staging.parent.is_dir() and not any(staging.parent.iterdir()):
+                staging.parent.rmdir()
+        except OSError:
+            pass
+        raise
+
+    message = (
+        f"TrackEverything result copied to {destination}  "
+        f"[{track_data.num_tracks} tracks, {track_data.num_frames} frames]"
+    )
+    print(message)
+
+    copied_metadata = json.loads(
+        (destination / METADATA_FILENAME).read_text(encoding="utf-8")
+    )
+    return build_track_data(destination, copied_metadata), message
+
+
+# ---------------------------------------------------------------------------
+# visualization
+# ---------------------------------------------------------------------------
+def build_visualizer_argv(
+    cfg: Config,
+    result_dir: Path,
+    output_dir: Path,
+    *,
+    frames_dir: Optional[Path] = None,
+    max_points: int = 5000,
+    trail_length: int = 8,
+    visibility_threshold: float = 0.5,
+    dynamic_threshold: float = 0.5,
+    background_opacity: float = 0.7,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+) -> list[str]:
+    """Explicit argv for the visualizer worker."""
+    argv = [
+        str(cfg.worker_python),
+        str(cfg.project_root / "worker" / "visualize.py"),
+        "--result-dir", str(result_dir),
+        "--output-dir", str(output_dir),
+        "--max-points", str(int(max_points)),
+        "--trail-length", str(int(trail_length)),
+        "--visibility-threshold", str(float(visibility_threshold)),
+        "--dynamic-threshold", str(float(dynamic_threshold)),
+        "--background-opacity", str(float(background_opacity)),
+    ]
+    if frames_dir is not None:
+        argv += ["--frames-dir", str(frames_dir)]
+    if width and height:
+        argv += ["--width", str(int(width)), "--height", str(int(height))]
+    return argv
+
+
+def _read_png_batch(directory: Path) -> "np.ndarray":
+    """Read the rendered PNG frames into a (T, H, W, 3) uint8 array."""
+    import numpy as np
+    from PIL import Image
+
+    paths = sorted(directory.glob("vis_*.png"))
+    if not paths:
+        raise TrackEverythingError(
+            f"The visualizer produced no frames in {directory}."
+        )
+    frames = []
+    for path in paths:
+        with Image.open(path) as img:
+            frames.append(np.asarray(img.convert("RGB")))
+    return np.stack(frames)
+
+
+def visualize_result(
+    cfg: Config,
+    track_data: TrackData,
+    *,
+    images: Any = None,
+    max_points: int = 5000,
+    trail_length: int = 8,
+    visibility_threshold: float = 0.5,
+    dynamic_threshold: float = 0.5,
+    background_opacity: float = 0.7,
+    timeout: Optional[float] = None,
+) -> tuple:
+    """Render the track overlay and return a ComfyUI ``IMAGE`` batch.
+
+    The rendering happens in the isolated worker (CPU only, no models). The
+    frames come back through PNG files and are turned into a float32
+    ``(T, H, W, 3)`` tensor in ``[0, 1]``.
+    """
+    cfg.validate()
+
+    result_dir = Path(track_data.result_dir)
+    for name in (TRACKS_FILENAME, GEOMETRY_FILENAME):
+        if not (result_dir / name).is_file():
+            raise TrackEverythingError(
+                f"Cannot visualize: {result_dir} is missing {name}."
+            )
+
+    tmp_root = Path(tempfile.mkdtemp(prefix="trackeverything_vis_"))
+    frames_dir = tmp_root / "frames"
+    source_frames = None
+
+    try:
+        if images is not None:
+            batch = validate_image_batch(images)
+            expected = track_data.num_frames
+            if expected is not None and batch.num_frames != int(expected):
+                raise TrackEverythingError(
+                    f"The IMAGE batch has {batch.num_frames} frames but the "
+                    f"tracks cover {expected} frames. They must match."
+                )
+            write_frames(batch, frames_dir)
+            source_frames = batch
+
+        out_dir = tmp_root / "rendered"
+        argv = build_visualizer_argv(
+            cfg,
+            result_dir,
+            out_dir,
+            frames_dir=frames_dir if source_frames is not None else None,
+            max_points=max_points,
+            trail_length=trail_length,
+            visibility_threshold=visibility_threshold,
+            dynamic_threshold=dynamic_threshold,
+            background_opacity=background_opacity,
+        )
+
+        worker = run_worker(cfg, argv, out_dir, timeout=timeout)
+        if worker.returncode != 0:
+            raise TrackEverythingError(
+                "The TrackEverything visualizer failed "
+                f"(exit code {worker.returncode}).\n"
+                f"Command: {' '.join(argv)}\n"
+                f"Log: {worker.log_path}\n"
+                "--- last output ---\n"
+                f"{_tail(worker.stdout + worker.stderr)}"
+            )
+
+        frames = _read_png_batch(out_dir)
+
+        # ComfyUI IMAGE: float32 (T, H, W, 3) in [0, 1]
+        import torch
+
+        tensor = torch.from_numpy(frames).float().div_(255.0)
+
+        message = (
+            f"TrackEverything visualized {tensor.shape[0]} frames "
+            f"({tensor.shape[2]}x{tensor.shape[1]}), "
+            f"{track_data.num_tracks} tracks"
+        )
+        print(message)
+
+        return (tensor,)
+
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)

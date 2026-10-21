@@ -63,12 +63,23 @@ check(
 section("Isolation")
 # ---------------------------------------------------------------------------
 print(f"PYTHONPATH      : {os.environ.get('PYTHONPATH', '<unset>')}")
+
+# The environment must not borrow anything from a ComfyUI installation.
+# NOTE: the check looks for a path *component* named "ComfyUI" - a user
+# account name (for example "egorkkk") is perfectly legitimate inside a path
+# and must never be treated as an isolation violation.
+comfy_paths = []
 for p in sys.path:
-    if p and ("ComfyUI" in p or "egorkkk" in p):
-        check(f"no ComfyUI path on sys.path: {p}", False)
-        break
-else:
-    check("no ComfyUI path on sys.path", True)
+    if not p:
+        continue
+    parts = Path(p).parts
+    if any(part.lower() == "comfyui" for part in parts):
+        comfy_paths.append(p)
+
+for p in comfy_paths:
+    check(f"no ComfyUI installation on sys.path: {p}", False)
+if not comfy_paths:
+    check("no ComfyUI installation on sys.path", True)
 
 site = [p for p in sys.path if p.endswith("site-packages")]
 for p in site:
