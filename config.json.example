@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Optional configuration for the TrackEverything ComfyUI nodes.",
+    "Copy this file to 'config.json' in the project root and adjust it, or",
+    "use the environment variables TRACKEVERYTHING_PROJECT_ROOT,",
+    "TRACKEVERYTHING_WORKER_PYTHON and TRACKEVERYTHING_OUTPUT_ROOT, which",
+    "take precedence over the values below.",
+    "Every path is resolved at runtime - nothing is hard-coded to a user account."
+  ],
+
+  "worker_python": "/absolute/path/to/the/isolated/environment/bin/python",
+  "output_root": "/absolute/path/to/a/writable/output/directory",
+  "model_repo": "katefgroup/TrackEverything",
+  "pi3_checkpoint": "yyfz233/Pi3",
+  "device": "cuda",
+  "geometry_backend": "pi3"
+}
