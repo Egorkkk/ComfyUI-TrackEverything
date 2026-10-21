@@ -62,4 +62,7 @@ inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone_
 # --- ComfyUI nodes ----------------------------------------------------------
 test-nodes = { cmd = "python tests/test_comfy_nodes.py", description = "Node unit tests (fake worker, no GPU)" }
 test-nodes-e2e = { cmd = "python tests/test_node_e2e.py", description = "Node end-to-end test with the real model" }
+test-save-data = { cmd = "python tests/test_save_data.py", description = "Save Data node tests" }
+test-visualize = { cmd = "python tests/test_visualize.py", description = "Visualize node tests" }
+test-visualize-e2e = { cmd = "python tests/test_visualize_e2e.py", description = "Visualize end-to-end test on the standalone results" }
 diagnose-vram = { cmd = "python scripts/diagnose_vram.py --max_frames 16", description = "Per-stage CUDA memory diagnostics" }

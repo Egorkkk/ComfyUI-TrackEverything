@@ -257,7 +257,13 @@ the node, not at ComfyUI startup.
 Watch the terminal: when a node runs, the worker's log is streamed to the
 ComfyUI console and also saved as `worker.log` next to the results.
 
-## 7. A minimal test workflow
+## 7. Two minimal workflows
+
+### 7.1 Inference
+
+```
+Load Video ──▶ TrackEverything Track ──▶ TrackEverything Save Data
+```
 
 1. Load a video (e.g. the *Load Video* / *VHS* node) or any node that
    outputs an `IMAGE` batch.
@@ -265,12 +271,50 @@ ComfyUI console and also saved as `worker.log` next to the results.
 3. Connect the `IMAGE` output to the node's `images` input.
 4. Leave the defaults: `num_iters = 3`, `voxel_size = 0.02`,
    `mem_efficient = true`.
-5. Queue the workflow.
-6. The node returns a `TRACK_DATA` output.
+5. Add **TrackEverything Save Data** and connect the `TRACK_DATA` output of
+   the Track node to its `track_data` input.
+   * `save_mode = reference` — the files stay where they are, the node only
+     reports the path (nothing is copied);
+   * `save_mode = copy` — the node writes a byte-identical copy into
+     ComfyUI's output directory under `filename_prefix`.
+6. Queue the workflow. The Save Data node shows the resulting path in the
+   ComfyUI UI.
 
-To re-use a previous run without running the model again, add
-**TrackEverything Load Data** and paste the result directory
-(for example `/home/egorkkk/ComfyUI/output/trackeverything_20250101-120000`).
+### 7.2 Visualization (no repeated inference)
+
+```
+TrackEverything Load Data ──▶ TrackEverything Visualize ──▶ Preview Image
+```
+
+1. Add **TrackEverything Load Data** and paste the result directory (for
+   example `/home/egorkkk/ComfyUI/output/trackeverything_20250101-120000`).
+2. Add **TrackEverything Visualize** and connect the `TRACK_DATA` output to
+   its `track_data` input.
+3. *Optional but recommended:* connect the **original `IMAGE` batch** to the
+   `images` input of the Visualize node — the tracks are then drawn on top of
+   the footage, at the footage's own resolution.
+4. Add **Preview Image** (or any image consumer) and connect the `images`
+   output of the Visualize node to it.
+
+This workflow reads the saved `tracks.pt` / `geometry.pt` only: **no model is
+loaded, no inference is run and the GPU is not touched.** The rendering
+happens in a separate, CPU-only worker process.
+
+Useful Visualize parameters:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `max_points` | 5000 | how many tracks are drawn at most |
+| `trail_length` | 8 | length of the comet trails, in frames |
+| `visibility_threshold` | 0.5 | visibility logit -> probability threshold |
+| `dynamic_threshold` | 0.5 | static/dynamic logit -> probability threshold |
+| `background_opacity` | 0.7 | how strongly the source frames are darkened |
+
+**Resolution.** With `images` connected, the output has the resolution of
+that batch (the tracks are projected with rescaled intrinsics, so they line
+up with the original pixels). Without `images`, the background is black and
+the resolution is the working resolution recorded in the metadata
+(e.g. 512×384).
 
 ## 8. Check the result
 
@@ -311,7 +355,71 @@ relate to your pixels:
 * `-1000` marks a missing / not-yet-existing trajectory - it is **not** a
   coordinate.
 
-## 9. Removing the nodes again
+## 9. Updating an existing installation
+
+```bash
+cd ~/$USER/trackeverything
+git pull
+git submodule update --init --recursive
+```
+
+Then restart ComfyUI — the node class list is read at startup.
+
+Verify the four nodes are present:
+
+| Node | Category | Expected |
+|---|---|---|
+| TrackEverything Track | TrackEverything | input `images`, output `TRACK_DATA` |
+| TrackEverything Load Data | TrackEverything | input `result_dir`, output `TRACK_DATA` |
+| TrackEverything Save Data | TrackEverything | `OUTPUT_NODE`, inputs `track_data` / `save_mode` / `filename_prefix` |
+| TrackEverything Visualize | TrackEverything | output `images` |
+
+A quick self-test of the installation (runs in your own environment, does not
+touch the ComfyUI process):
+
+```bash
+cd ~/$USER/trackeverything
+pixi run python scripts/check_env.py            # environment
+pixi run python tests/test_comfy_nodes.py        # nodes (fake worker, no GPU)
+pixi run python tests/test_save_data.py          # Save Data
+pixi run python tests/test_visualize.py          # Visualize
+```
+
+If the nodes do not appear in ComfyUI, check the ComfyUI console for an
+import error — the most common cause is a wrong `TRACKEVERYTHING_WORKER_PYTHON`
+or a missing `worker/visualize.py` (the visualizer lives next to
+`worker/runner.py`).
+
+### Test run
+
+1. Start ComfyUI and queue the inference workflow from §7.1 on a short clip.
+2. Check the ComfyUI console: the worker log is streamed there, and
+   `worker.log` is written next to the results.
+3. Check the output directory:
+
+```bash
+ls -l /home/egorkkk/ComfyUI/output/trackeverything_*/
+```
+
+```
+tracks.pt          scene tokens (coords, visibs, dyn_logits, src_*, cell_to_token)
+geometry.pt        depths, intrinsics, extrinsics, norm_factor
+metadata.json      parameters, versions, resolutions, coordinate transform
+worker_report.json runtime facts (versions, timings, peak CUDA memory)
+worker.log         the full worker log
+```
+
+4. Validate the result with the upstream checker:
+
+```bash
+pixi run python scripts/inspect_results.py \
+    /home/egorkkk/ComfyUI/output/trackeverything_20250101-120000
+```
+
+5. Queue the visualization workflow from §7.2 and confirm that **Preview
+   Image** shows the tracked points and their trails.
+
+## 10. Removing the nodes again
 
 ```bash
 # symlink
@@ -332,7 +440,7 @@ rm -rf ~/.cache/huggingface/hub/models--katefgroup--TrackEverything
 rm -rf ~/.cache/huggingface/hub/models--yyfz233--Pi3
 ```
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -343,3 +451,6 @@ rm -rf ~/.cache/huggingface/hub/models--yyfz233--Pi3
 | `CUDA out of memory` | the run needs ~7 GiB of free VRAM; close other GPU jobs or use a longer/shorter clip |
 | `No frames left after start_frame=...` | the IMAGE batch was empty |
 | results are not bit-identical between runs | expected: the upstream kernels reduce with atomics, so float outputs differ by ~1e-7 relative. Compare with a tolerance. |
+| the Visualize node returns a black image | the tracks are outside the frame: check `norm_factor` / the camera geometry, or lower `visibility_threshold` |
+| the Visualize node reports a frame count mismatch | the `IMAGE` batch and the tracks must cover the same number of frames |
+| the overlay does not line up with the footage | the `IMAGE` batch must have the **original** resolution; the node rescales the intrinsics accordingly |

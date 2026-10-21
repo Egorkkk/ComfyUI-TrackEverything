@@ -25,13 +25,14 @@ Two hard rules govern everything in this repo:
 ~/trackeverything/
 ├── comfy_nodes/            # ComfyUI nodes (installed into custom_nodes/)
 │   ├── __init__.py             # NODE_CLASS_MAPPINGS / NODE_DISPLAY_NAME_MAPPINGS
-│   ├── nodes.py                # Track + Load Data node classes
+│   ├── nodes.py                # Track + Load Data + Save Data + Visualize
 │   ├── bridge.py               # IMAGE batch -> PNG -> worker -> TRACK_DATA
 │   ├── config.py               # runtime path resolution + isolation guard
 │   └── types.py                # the TRACK_DATA payload
 ├── worker/                 # runs inside the isolated environment
 │   ├── __init__.py
-│   └── runner.py               # calls the original upstream demo_hf
+│   ├── runner.py               # calls the original upstream demo_hf
+│   └── visualize.py            # calls the original upstream renderer (CPU)
 ├── external/
 │   └── trackeverything/    # upstream, Git submodule (read-only, pinned)
 ├── scripts/                # setup / check / test / inspection helpers
@@ -48,6 +49,9 @@ Two hard rules govern everything in this repo:
 │   ├── test_e2e.sh          # end-to-end smoke test
 │   ├── test_comfy_nodes.py  # node unit tests (fake worker, no GPU)
 │   ├── test_node_e2e.py     # node end-to-end test (real model)
+│   ├── test_save_data.py    # Save Data node tests
+│   ├── test_visualize.py    # Visualize node tests (synthetic scene)
+│   ├── test_visualize_e2e.py# Visualize end-to-end test (standalone results)
 │   └── fake_worker.py       # stand-in worker used by the unit tests
 ├── test_data/              # test clips (git-ignored)
 ├── outputs/                # inference results (git-ignored)
@@ -237,6 +241,9 @@ pixi run bash tests/test_e2e.sh
 # ComfyUI node tests
 pixi run test-nodes        # unit tests against a fake worker (no GPU)
 pixi run test-nodes-e2e   # real inference through the Track node
+pixi run test-save-data   # Save Data node
+pixi run test-visualize   # Visualize node (synthetic scene)
+pixi run test-visualize-e2e  # Visualize on the standalone results
 
 # reproducibility: two runs must agree within float32 tolerance
 pixi run python scripts/check_determinism.py outputs/det_a outputs/det_b
@@ -284,16 +291,32 @@ ln -s ~/trackeverything/comfy_nodes \
 |---|---|---|---|
 | **TrackEverything Track** | `images` (IMAGE batch), `num_iters` (3), `voxel_size` (0.02), `mem_efficient` (true) | `TRACK_DATA` | yes, in a worker process |
 | **TrackEverything Load Data** | `result_dir` (STRING) | `TRACK_DATA` | no |
+| **TrackEverything Save Data** | `track_data`, `save_mode` (`reference`/`copy`), `filename_prefix` | `TRACK_DATA` | no (`OUTPUT_NODE`) |
+| **TrackEverything Visualize** | `track_data`, `max_points` (5000), `trail_length` (8), `visibility_threshold` (0.5), `dynamic_threshold` (0.5), `background_opacity` (0.7), optional `images` (IMAGE batch) | `images` (IMAGE batch) | no |
 
-Both return the same `TRACK_DATA` handle (file references + metadata, never
-tensors), so a workflow can be rewired between them freely.
+All four nodes exchange the same `TRACK_DATA` handle (file references +
+metadata, never tensors), so a workflow can be rewired freely between them.
+
+**Two minimal workflows**
+
+```
+Inference:
+  Load Video ──▶ TrackEverything Track ──▶ TrackEverything Save Data
+
+Visualization (no repeated inference):
+  TrackEverything Load Data ──▶ TrackEverything Visualize ──▶ Preview Image
+```
+
+For the visualization workflow, connect the original `IMAGE` batch to the
+optional `images` input of the Visualize node to draw the tracks on top of the
+footage.
 
 **Isolation.** The ComfyUI process never imports `trackeverything`,
 `torch_scatter` or anything from the worker's Python 3.10 environment — an
 isolation guard in `comfy_nodes/config.py` fails loudly if that ever happens.
-The model runs in a separate process with its own CUDA context, so its VRAM
+The tracker runs in a separate process with its own CUDA context, so its VRAM
 is released completely when the run ends; ComfyUI's own models are never
-touched.
+touched. The visualizer is CPU-only and loads no model at all.
 
 **Configuration** (nothing is hard-coded to a user account):
 
