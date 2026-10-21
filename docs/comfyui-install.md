@@ -372,7 +372,7 @@ Verify the four nodes are present:
 | TrackEverything Track | TrackEverything | input `images`, output `TRACK_DATA` |
 | TrackEverything Load Data | TrackEverything | input `result_dir`, output `TRACK_DATA` |
 | TrackEverything Save Data | TrackEverything | `OUTPUT_NODE`, inputs `track_data` / `save_mode` / `filename_prefix` |
-| TrackEverything Visualize | TrackEverything | output `images` |
+| TrackEverything Visualize | TrackEverything | output `images` (socket type `IMAGE`) |
 
 A quick self-test of the installation (runs in your own environment, does not
 touch the ComfyUI process):

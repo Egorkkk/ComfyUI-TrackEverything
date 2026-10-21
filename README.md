@@ -292,7 +292,7 @@ ln -s ~/trackeverything/comfy_nodes \
 | **TrackEverything Track** | `images` (IMAGE batch), `num_iters` (3), `voxel_size` (0.02), `mem_efficient` (true) | `TRACK_DATA` | yes, in a worker process |
 | **TrackEverything Load Data** | `result_dir` (STRING) | `TRACK_DATA` | no |
 | **TrackEverything Save Data** | `track_data`, `save_mode` (`reference`/`copy`), `filename_prefix` | `TRACK_DATA` | no (`OUTPUT_NODE`) |
-| **TrackEverything Visualize** | `track_data`, `max_points` (5000), `trail_length` (8), `visibility_threshold` (0.5), `dynamic_threshold` (0.5), `background_opacity` (0.7), optional `images` (IMAGE batch) | `images` (IMAGE batch) | no |
+| **TrackEverything Visualize** | `track_data`, `max_points` (5000), `trail_length` (8), `visibility_threshold` (0.5), `dynamic_threshold` (0.5), `background_opacity` (0.7), optional `images` (IMAGE batch) | `images` — socket type **`IMAGE`** | no |
 
 All four nodes exchange the same `TRACK_DATA` handle (file references +
 metadata, never tensors), so a workflow can be rewired freely between them.
@@ -310,6 +310,13 @@ Visualization (no repeated inference):
 For the visualization workflow, connect the original `IMAGE` batch to the
 optional `images` input of the Visualize node to draw the tracks on top of the
 footage.
+
+**Socket types.** The Visualize node declares its output with ComfyUI's
+standard `IMAGE` type (the display name is still `images`). That is what
+makes the socket blue and lets it be connected to the `images` input of the
+standard nodes — *Create Video*, *Preview Image*, *Save Image*, … ComfyUI
+links sockets by comparing the type names exactly, so a custom type name
+would render as a grey, unconnectable socket.
 
 **Isolation.** The ComfyUI process never imports `trackeverything`,
 `torch_scatter` or anything from the worker's Python 3.10 environment — an

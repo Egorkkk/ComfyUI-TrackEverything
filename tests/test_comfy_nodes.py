@@ -476,6 +476,67 @@ class TestIsolation(unittest.TestCase):
         self.assertNotIn("/home/ocdev", source)
         self.assertNotIn("/home/egorkkk", source)
 
+    def test_standard_socket_types_use_the_exact_comfyui_spelling(self):
+        """A standard type must be spelled exactly as ComfyUI spells it.
+
+        ComfyUI links sockets by comparing the type *names* of the output and
+        the input. A standard type written in a different case (e.g. "images"
+        instead of "IMAGE") becomes an unknown custom type: the socket turns
+        grey and cannot be connected to the standard nodes.
+        """
+        standard_types = {
+            "IMAGE", "MASK", "LATENT", "MODEL", "CLIP", "VAE", "CONDITIONING",
+            "CONTROL_NET", "INT", "FLOAT", "STRING", "BOOLEAN", "VIDEO",
+            "AUDIO", "CLIP_VISION", "CLIP_TEXT", "UPSCALE_MODEL", "GLIGEN",
+            "PHOTOMAKER", "FLUX",
+        }
+        lower_to_canonical = {t.lower(): t for t in standard_types}
+
+        problems = []
+        for name, cls in nodes.NODE_CLASS_MAPPINGS.items():
+            for out_type in getattr(cls, "RETURN_TYPES", ()):
+                canonical = lower_to_canonical.get(out_type.lower())
+                if canonical is not None and out_type != canonical:
+                    problems.append(
+                        f"{name}: output type {out_type!r} must be spelled "
+                        f"{canonical!r}"
+                    )
+            for section in ("required", "optional"):
+                for input_name, spec in cls.INPUT_TYPES().get(section, {}).items():
+                    in_type = spec[0]
+                    if isinstance(in_type, list):
+                        in_types = in_type
+                    else:
+                        in_types = [in_type]
+                    for in_type in in_types:
+                        if not isinstance(in_type, str):
+                            continue
+                        canonical = lower_to_canonical.get(in_type.lower())
+                        if canonical is not None and in_type != canonical:
+                            problems.append(
+                                f"{name}.{input_name}: input type {in_type!r} must "
+                                f"be spelled {canonical!r}"
+                            )
+
+        self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_visualize_output_can_be_linked_to_a_standard_image_input(self):
+        """The Visualize output must link to the 'images' input of the
+        standard nodes (Create Video, Preview Image, ...)."""
+        standard_node_inputs = {
+            # (input name, input type) of the standard image-consuming nodes
+            "CreateVideo.images": "IMAGE",
+            "PreviewImage.images": "IMAGE",
+            "SaveImage.images": "IMAGE",
+            "ImageScale.images": "IMAGE",
+        }
+        out_types = set(nodes.TrackEverythingVisualize.RETURN_TYPES)
+        for key, in_type in standard_node_inputs.items():
+            self.assertIn(
+                in_type, out_types,
+                f"the Visualize output cannot be linked to {key}",
+            )
+
     def test_package_imports_in_a_foreign_interpreter_without_torch(self):
         """The ComfyUI side must not depend on the worker's packages.
 

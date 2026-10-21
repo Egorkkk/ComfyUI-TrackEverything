@@ -215,7 +215,11 @@ class TrackEverythingVisualize:
             },
         }
 
-    RETURN_TYPES = ("images",)
+    # The socket type must be ComfyUI's standard "IMAGE" type - that is what
+    # makes the socket blue and lets it connect to the "images" input of the
+    # standard nodes (Create Video, Preview Image, ...). A custom type like
+    # "images" would render as a grey, unconnectable socket.
+    RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("images",)
     FUNCTION = "visualize"
     CATEGORY = "TrackEverything"

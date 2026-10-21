@@ -188,8 +188,49 @@ class TestRegistration(VisualizeCase):
         self.assertEqual(required["dynamic_threshold"][1]["default"], 0.5)
         self.assertEqual(required["background_opacity"][1]["default"], 0.7)
 
-    def test_returns_an_image_batch(self):
-        self.assertEqual(nodes.TrackEverythingVisualize.RETURN_TYPES, ("images",))
+    def test_returned_value_follows_the_image_type_contract(self):
+        """The value must satisfy ComfyUI's IMAGE type contract."""
+        import torch
+
+        config = Config.resolve()
+        config.worker_python = Path(sys.executable)
+        (rendered,) = bridge.visualize_result(config, self._track_data())
+
+        self.assertIsInstance(rendered, torch.Tensor)
+        self.assertEqual(rendered.dtype, torch.float32)
+        self.assertEqual(rendered.ndim, 4)          # (B, H, W, C)
+        self.assertEqual(rendered.shape[-1], 3)     # RGB
+        self.assertGreaterEqual(float(rendered.min()), 0.0)
+        self.assertLessEqual(float(rendered.max()), 1.0)
+
+    def test_output_socket_uses_the_standard_comfyui_image_type(self):
+        """The socket type must be ComfyUI's standard "IMAGE" type.
+
+        A custom type name (e.g. "images") makes the socket grey and
+        unconnectable: it cannot be linked to the "images" input of the
+        standard nodes (Create Video, Preview Image, ...), because ComfyUI
+        only links sockets whose type names match exactly.
+        """
+        self.assertEqual(
+            nodes.TrackEverythingVisualize.RETURN_TYPES,
+            ("IMAGE",),
+            "the output socket must use the standard ComfyUI type 'IMAGE'",
+        )
+        # the *display* name stays lowercase
+        self.assertEqual(nodes.TrackEverythingVisualize.RETURN_NAMES, ("images",))
+
+    def test_output_type_matches_a_standard_image_input(self):
+        """The output type must match the input type of the standard nodes."""
+        standard_image_inputs = ["IMAGE"]
+        for out_type in nodes.TrackEverythingVisualize.RETURN_TYPES:
+            self.assertIn(
+                out_type, standard_image_inputs,
+                "the output type must be connectable to a standard IMAGE input",
+            )
+
+    def test_input_socket_uses_the_standard_image_type(self):
+        optional = nodes.TrackEverythingVisualize.INPUT_TYPES()["optional"]
+        self.assertEqual(optional["images"][0], "IMAGE")
 
 
 class TestGeometryHelpers(unittest.TestCase):
