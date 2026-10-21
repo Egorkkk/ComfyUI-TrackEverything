@@ -21,6 +21,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+UPSTREAM_PARENT = str(REPO_ROOT / "external")
+
+# The upstream repository *is* the `trackeverything` package, so its PARENT
+# directory has to be importable. The upstream README prescribes exporting
+# PYTHONPATH; we additionally self-bootstrap here so the script can be called
+# directly (e.g. `pixi run python scripts/check_env.py`).
+if UPSTREAM_PARENT not in sys.path:
+    sys.path.insert(0, UPSTREAM_PARENT)
+    os.environ["PYTHONPATH"] = (
+        UPSTREAM_PARENT + os.pathsep + os.environ.get("PYTHONPATH", "")
+    ).rstrip(os.pathsep)
 
 ok = True
 
@@ -139,9 +150,10 @@ except Exception as exc:
 # ---------------------------------------------------------------------------
 section("TrackEverything package")
 # ---------------------------------------------------------------------------
-parent = str(REPO_ROOT / "external")
+parent = UPSTREAM_PARENT
 in_path = parent in sys.path or os.environ.get("PYTHONPATH", "").find(parent) >= 0
 print(f"expected parent on sys.path: {parent}")
+print(f"self-bootstrapped          : {in_path}")
 try:
     from trackeverything.demo_hf import TrackEverything
 

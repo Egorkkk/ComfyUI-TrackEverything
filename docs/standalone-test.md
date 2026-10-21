@@ -280,7 +280,37 @@ The results are read and reported in their native dtype; **no JSON or other
 lossy conversion** of the numeric data is performed. `run_report.json` only
 contains the run metadata (command, timing, VRAM), never the tensors.
 
-## 8. Errors and limitations
+## 8. Reproducibility of the numeric results
+
+Two identical 8-frame runs were compared tensor by tensor with
+`scripts/check_determinism.py`:
+
+| Tensor | Bit-identical? | max abs diff | max rel diff |
+|---|---|---|---|
+| `tracks.pt.coords` | no | 2.295e-06 | 2.295e-09 |
+| `tracks.pt.visibs` | no | 2.828e-04 | 2.828e-07 |
+| `tracks.pt.dyn_logits` | no | 2.877e-04 | 2.877e-07 |
+| `tracks.pt.cell_to_token` | **yes** | 0 | 0 |
+| `tracks.pt.src_time` / `src_y` / `src_x` | **yes** | 0 | 0 |
+| `geometry.pt.depths` | **yes** | 0 | 0 |
+| `geometry.pt.intrinsics` | **yes** | 0 | 0 |
+| `geometry.pt.extrinsics` | **yes** | 0 | 0 |
+
+**Conclusion.** The pipeline is *structurally* fully reproducible: the geometry
+produced by Pi3, the number of tracks, the token assignment and every index
+tensor are **bit-identical** across runs. The tracker's float outputs
+(`coords`, `visibs`, `dyn_logits`) differ by a few float32 ULPs
+(relative 1e-9 … 1e-7), which is the expected consequence of CUDA kernels
+that reduce with atomics / non-deterministic reduction order in the upstream
+code. No seeding or algorithm change was applied to compensate — the upstream
+code was left untouched.
+
+Practical implication for the future ComfyUI integration: outputs must be
+treated as *numerically equivalent within float32 tolerance*, not bit-exact,
+and any regression test should compare with a relative tolerance rather than
+exact equality.
+
+## 9. Errors and limitations
 
 1. **`data.pyg.org` / `dl.fbaipublicfiles.com` throttling** — the single real
    infrastructure obstacle. Worked around without changing any algorithm
@@ -302,7 +332,7 @@ contains the run metadata (command, timing, VRAM), never the tensors.
 7. **Single GPU, single run** — no determinism/repeatability study across
    repeated runs was performed.
 
-## 9. Acceptance criteria (ТЗ №1, §10)
+## 10. Acceptance criteria (ТЗ №1, §10)
 
 | # | Criterion | Status |
 |---|---|---|
@@ -319,7 +349,7 @@ contains the run metadata (command, timing, VRAM), never the tensors.
 **All nine criteria are met.** No CUDA OOM was encountered, so the
 "defer to the RunPod A40 48 GB host" fallback in §6 of the ТЗ was not needed.
 
-## 10. Reproducing this test
+## 11. Reproducing this test
 
 ```bash
 cd ~/trackeverything
@@ -337,4 +367,10 @@ pixi run python scripts/run_inference.py \
     --geometry_backend pi3 --mode dense --num_iters 3 \
     --voxel_size 0.02 --max_frames 16
 pixi run python scripts/inspect_results.py outputs/standalone_16f
+
+# full end-to-end smoke test (env -> clip -> inference -> validation)
+pixi run bash tests/test_e2e.sh
+
+# reproducibility of two runs
+pixi run python scripts/check_determinism.py outputs/det_a outputs/det_b
 ```

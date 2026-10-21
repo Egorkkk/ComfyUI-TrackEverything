@@ -28,10 +28,14 @@ Two hard rules govern everything in this repo:
 ├── scripts/                # setup / check / test / inspection helpers
 │   ├── setup_env.sh            # install torch, torchvision, deps
 │   ├── build_torch_scatter.sh  # build torch_scatter from source (see §4)
+│   ├── fetch_dinov2_weights.sh # DINOv2 backbone from an HF mirror (see §4)
 │   ├── check_env.py            # Stage B3 environment verification
 │   ├── make_test_video.py      # Stage D1 synthetic test clip
-│   └── inspect_results.py      # Stage E tracks.pt / geometry.pt validation
-├── tests/                  # additional checks
+│   ├── run_inference.py        # Stage D run + timing / peak VRAM
+│   ├── inspect_results.py      # Stage E tracks.pt / geometry.pt validation
+│   └── check_determinism.py    # reproducibility of two runs
+├── tests/
+│   └── test_e2e.sh          # end-to-end smoke test
 ├── test_data/              # test clips (git-ignored)
 ├── outputs/                # inference results (git-ignored)
 ├── docs/                   # reports
@@ -207,6 +211,21 @@ validates:
 The `-1000` sentinel used by upstream for "missing / not-yet-existing"
 trajectory entries is excluded from the statistics — it is not a 3D coordinate.
 Results are never converted to JSON or any other lossy format.
+
+## 7.1 Tests
+
+```bash
+# end-to-end: env check -> synthetic clip -> inference -> validation
+pixi run bash tests/test_e2e.sh
+
+# reproducibility: two runs must agree within float32 tolerance
+pixi run python scripts/check_determinism.py outputs/det_a outputs/det_b
+```
+
+Note: the upstream tracker is **not** bit-reproducible on GPU (CUDA kernels
+that reduce with atomics), but the geometry and all index tensors are
+bit-identical and the float outputs agree to ~1e-7 relative. See
+`docs/standalone-test.md` §8.
 
 ## 8. Re-downloading / reusing the models
 
