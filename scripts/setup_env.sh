@@ -6,6 +6,7 @@
 #   1. torch + torchvision from the PyTorch cu129 index
 #   2. torch_scatter from the PyG wheel index (prebuilt for torch 2.8+cu129)
 #   3. everything else from the pinned requirements.txt
+#   4. the cuRoPE2D CUDA kernel (croco) used by Pi3
 #
 # Deliberately does NOT build libs/ops (deformable attention): it is only
 # needed for training, not for inference.
@@ -48,6 +49,16 @@ REQ_TMP="$(mktemp)"
 grep -vE '^torch_scatter' "${REQS}" > "${REQ_TMP}"
 python -m pip install --resume-retries 10 --timeout 120 -r "${REQ_TMP}"
 rm -f "${REQ_TMP}"
+
+echo "==> [4/4] the CUDA RoPE2D kernel (croco's cuRoPE2D)"
+# Pi3 uses the compiled cuRoPE2D kernel when it is importable and falls back
+# to a slow pure-pytorch implementation otherwise. The build needs the CUDA
+# toolkit (nvcc 12.9), which the pixi environment provides.
+# See scripts/build_curope.sh and README §4.
+bash scripts/build_curope.sh || {
+  echo "    !! the cuRoPE2D kernel could not be built."
+  echo "    !! Pi3 will use its pure-pytorch RoPE fallback (slower)."
+}
 
 echo "==> done"
 python -m pip list 2>/dev/null | grep -iE "^(torch|torchvision|torch-scatter|torch_scatter|numpy|transformers|huggingface-hub|opencv|imageio|av) " || true

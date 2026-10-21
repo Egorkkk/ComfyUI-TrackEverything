@@ -203,6 +203,41 @@ def _load_geometry_weights(annotator) -> None:
         loader()
 
 
+class _BlockCuropeFinder:
+    """Meta path finder that hides ``models.curope`` from the import system.
+
+    Used by the benchmark to run the *same* code with the slow pure-pytorch
+    RoPE fallback, so the two runs can be compared. The upstream decides
+    between the CUDA kernel and the fallback with a plain
+    ``try: from models.curope import cuRoPE2D / except ImportError:``, so
+    blocking the import is enough - and it leaves the upstream untouched.
+    """
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "models.curope" or fullname.startswith("models.curope."):
+            raise ImportError(f"{fullname} is blocked (forced fallback)")
+        return None
+
+
+def force_rope_fallback() -> None:
+    """Make the upstream fall back to its pure-pytorch RoPE implementation."""
+    for name in list(sys.modules):
+        if name == "models.curope" or name.startswith("models.curope."):
+            del sys.modules[name]
+    sys.meta_path.insert(0, _BlockCuropeFinder())
+
+
+def rope_implementation() -> str:
+    """Which RoPE implementation the upstream bound."""
+    try:
+        from trackeverything.third_party.pi3.models.layers import pos_embed
+
+        module = getattr(pos_embed.RoPE2D, "__module__", "")
+        return "cuda" if "curope" in module else "fallback"
+    except Exception:
+        return "unknown"
+
+
 class _ChunkProgress:
     """Counts the geometry chunks so the geometry phase gets a real bar.
 
@@ -357,6 +392,12 @@ def main(argv: list[str] | None = None) -> int:
     # -- console reporting ------------------------------------------------
     console = Console()
 
+    if os.environ.get("TRACKEVERYTHING_FORCE_ROPE_FALLBACK", "").strip() in ("1", "true", "yes"):
+        force_rope_fallback()
+        forced = True
+    else:
+        forced = False
+
     phase = {"label": "inference", "started": time.time()}
 
     def _on_upstream_message(message: str) -> None:
@@ -394,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
             "output": str(output_dir),
         },
     )
+    if forced:
+        console.detail("the CUDA RoPE kernel is disabled - pure pytorch fallback")
 
     total_stages = 4
 
@@ -512,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     report["cuda"] = _cuda_report()
     report["wall_clock_seconds"] = round(time.time() - started, 3)
     report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    report["rope_implementation"] = rope_implementation()
+    report["rope_forced_fallback"] = forced
 
     (output_dir / "worker_report.json").write_text(json.dumps(report, indent=2))
 
