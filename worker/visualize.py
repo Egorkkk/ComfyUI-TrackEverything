@@ -46,12 +46,18 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
 WORKER_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = WORKER_DIR.parent
 UPSTREAM_PARENT = PROJECT_ROOT / "external"
+
+if str(WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKER_DIR))
+
+from console import Console, human_bytes, install_upstream_logging  # noqa: E402
 
 #: The upstream sentinel for "missing / not-yet-existing" trajectory entries.
 SENTINEL = -1000.0
@@ -155,6 +161,18 @@ def read_frames_rgb(frames_dir: Path, size_hw: tuple[int, int] | None = None):
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+def _heartbeat(console: Console, stop: threading.Event, label: str, num_frames: int):
+    """Print an elapsed-time / rate line while a long call is running."""
+    started = time.time()
+    while not stop.wait(1.0):
+        elapsed = time.time() - started
+        rate = num_frames / elapsed if elapsed > 0 and num_frames else 0.0
+        console.live(
+            f"{label:<26s} elapsed {elapsed:6.1f}s"
+            + (f"   {rate:5.2f} frames/s" if rate else "")
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="TrackEverything visualizer worker (CPU only, no models)"
@@ -202,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, json.JSONDecodeError):
             metadata = {}
 
+    console = Console()
+    install_upstream_logging(console)
+
     started = time.time()
     report: dict = {
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -218,6 +239,21 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
 
+    total_stages = 4
+    console.banner(
+        "TrackEverything - visualization",
+        {
+            "result": str(result_dir),
+            "source frames": args.frames_dir or "<black background>",
+            "max points": args.max_points,
+            "trail length": args.trail_length,
+            "visibility": args.visibility_threshold,
+            "dynamic": args.dynamic_threshold,
+            "background": args.background_opacity,
+            "output": str(output_dir),
+        },
+    )
+
     try:
         from trackeverything.utils.alltrack3r_utils import CompressedTracks
         from trackeverything.utils.vis_utils import _render_flat_2d_tracks_frames
@@ -226,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     try:
+        # -- stage 1: load the tensors -------------------------------------
+        console.stage(1, total_stages, "loading tracks.pt and geometry.pt")
+        t0 = time.time()
         tracks = load_torch_dict(tracks_path)
         geometry = load_torch_dict(geometry_path)
 
@@ -247,7 +286,13 @@ def main(argv: list[str] | None = None) -> int:
 
         intrinsics = geometry["intrinsics"].detach().float().cpu()
         extrinsics = geometry["extrinsics"].detach().float().cpu()
+        console.stage_done(
+            time.time() - t0, f"{n_tracks} tracks over {n_frames} frames"
+        )
 
+        # --- stage 2: scene preparation ------------------------------------
+        console.stage(2, total_stages, "preparing the scene")
+        t0 = time.time()
         # --- the resolution the cameras refer to --------------------------
         working_hw = None
         out_meta = metadata.get("output", {}) or {}
@@ -320,21 +365,40 @@ def main(argv: list[str] | None = None) -> int:
             src_y=src_y,
             src_x=src_x,
         )
-
-        # --- render ----------------------------------------------------------
-        frames = _render_flat_2d_tracks_frames(
-            rgb,
-            render_intrinsics,
-            extrinsics,
-            flat,
-            visib_thresh=float(args.visibility_threshold),
-            bkg_opacity=float(args.background_opacity),
-            trail_len=int(args.trail_length),
-            max_points=int(args.max_points),
-            dynamic_thresh=float(args.dynamic_threshold),
-            point_radius=int(args.point_radius),
-            linewidth=int(args.linewidth),
+        console.stage_done(
+            time.time() - t0,
+            f"render {target_hw[1]}x{target_hw[0]}, "
+            f"{int(behind.sum().item())} behind-camera entries masked",
         )
+
+        # --- stage 3: render -----------------------------------------------
+        console.stage(3, total_stages, "rendering the tracks (upstream renderer)")
+        t0 = time.time()
+        stop = threading.Event()
+        beat = threading.Thread(
+            target=_heartbeat,
+            args=(console, stop, "rendering", n_frames),
+            daemon=True,
+        )
+        beat.start()
+        try:
+            frames = _render_flat_2d_tracks_frames(
+                rgb,
+                render_intrinsics,
+                extrinsics,
+                flat,
+                visib_thresh=float(args.visibility_threshold),
+                bkg_opacity=float(args.background_opacity),
+                trail_len=int(args.trail_length),
+                max_points=int(args.max_points),
+                dynamic_thresh=float(args.dynamic_threshold),
+                point_radius=int(args.point_radius),
+                linewidth=int(args.linewidth),
+            )
+        finally:
+            stop.set()
+            beat.join(timeout=2.0)
+        render_seconds = time.time() - t0
 
         frames = np.asarray(frames)
         if frames.ndim != 4 or frames.shape[-1] != 3:
@@ -343,8 +407,12 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 f"the renderer produced {frames.shape[0]} frames, expected {n_frames}"
             )
+        rate = (n_frames / render_seconds) if render_seconds > 0 else 0.0
+        console.stage_done(render_seconds, f"{n_frames} frames, {rate:.2f} frames/s")
 
-        # --- write the PNG frames -------------------------------------------
+        # --- stage 4: write the PNG frames ---------------------------------
+        console.stage(4, total_stages, "writing the PNG frames")
+        t0 = time.time()
         from PIL import Image
 
         names = []
@@ -352,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
             name = f"vis_{index:06d}.png"
             Image.fromarray(frame.astype(np.uint8)).save(output_dir / name)
             names.append(name)
+        written = sum((output_dir / n).stat().st_size for n in names)
+        console.stage_done(time.time() - t0, f"{len(names)} files, {human_bytes(written)}")
 
         report["results"] = {
             "num_frames": int(frames.shape[0]),
@@ -372,6 +442,16 @@ def main(argv: list[str] | None = None) -> int:
         report["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
         (output_dir / "visualization_report.json").write_text(json.dumps(report, indent=2))
+        console.summary(
+            {
+                "result": str(output_dir),
+                "frames": int(frames.shape[0]),
+                "resolution": f"{target_hw[1]}x{target_hw[0]}",
+                "tracks": n_tracks,
+                "total": f"{report['wall_clock_seconds']:.2f} s",
+                "cuda": "not used (CPU only)",
+            }
+        )
         print(
             f"[visualizer] rendered {frames.shape[0]} frames at "
             f"{target_hw[1]}x{target_hw[0]} -> {output_dir}"
