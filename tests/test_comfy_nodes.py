@@ -476,6 +476,43 @@ class TestIsolation(unittest.TestCase):
         self.assertNotIn("/home/ocdev", source)
         self.assertNotIn("/home/egorkkk", source)
 
+    def test_package_imports_in_a_foreign_interpreter_without_torch(self):
+        """The ComfyUI side must not depend on the worker's packages.
+
+        Runs the import in a *different* interpreter (the system python 3.12
+        here) and checks that neither torch nor numpy nor the upstream
+        packages are pulled in.
+        """
+        import subprocess
+
+        candidates = [
+            "/usr/bin/python3",
+            shutil.which("python3") or "",
+        ]
+        interpreter = next((c for c in candidates if c and Path(c).exists()), None)
+        if interpreter is None:
+            self.skipTest("no second interpreter available")
+
+        code = (
+            "import sys; sys.path.insert(0, %r);"
+            "import comfy_nodes;"
+            "from comfy_nodes.config import Config, assert_isolated;"
+            "assert_isolated(Config.resolve());"
+            "assert 'torch' not in sys.modules, 'torch leaked';"
+            "assert 'numpy' not in sys.modules, 'numpy leaked';"
+            "assert 'trackeverything' not in sys.modules;"
+            "assert 'torch_scatter' not in sys.modules;"
+            "print('OK')" % str(PROJECT_ROOT)
+        )
+        proc = subprocess.run(
+            [interpreter, "-c", code], capture_output=True, text=True, timeout=120
+        )
+        self.assertEqual(
+            proc.returncode, 0,
+            f"import failed in {interpreter}:\n{proc.stdout}\n{proc.stderr}",
+        )
+        self.assertIn("OK", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

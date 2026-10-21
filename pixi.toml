@@ -57,4 +57,9 @@ infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_1
 infer-wrapped = { cmd = "python scripts/run_inference.py --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone_16f --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --max_frames 16", description = "Same, plus wall-clock and peak VRAM measurement" }
 
 # --- verification -----------------------------------------------------------
-inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone", description = "Inspect tracks.pt / geometry.pt" }
+inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone_16f", description = "Inspect tracks.pt / geometry.pt" }
+
+# --- ComfyUI nodes ----------------------------------------------------------
+test-nodes = { cmd = "python tests/test_comfy_nodes.py", description = "Node unit tests (fake worker, no GPU)" }
+test-nodes-e2e = { cmd = "python tests/test_node_e2e.py", description = "Node end-to-end test with the real model" }
+diagnose-vram = { cmd = "python scripts/diagnose_vram.py --max_frames 16", description = "Per-stage CUDA memory diagnostics" }

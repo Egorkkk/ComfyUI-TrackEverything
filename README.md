@@ -23,6 +23,15 @@ Two hard rules govern everything in this repo:
 
 ```text
 ~/trackeverything/
+├── comfy_nodes/            # ComfyUI nodes (installed into custom_nodes/)
+│   ├── __init__.py             # NODE_CLASS_MAPPINGS / NODE_DISPLAY_NAME_MAPPINGS
+│   ├── nodes.py                # Track + Load Data node classes
+│   ├── bridge.py               # IMAGE batch -> PNG -> worker -> TRACK_DATA
+│   ├── config.py               # runtime path resolution + isolation guard
+│   └── types.py                # the TRACK_DATA payload
+├── worker/                 # runs inside the isolated environment
+│   ├── __init__.py
+│   └── runner.py               # calls the original upstream demo_hf
 ├── external/
 │   └── trackeverything/    # upstream, Git submodule (read-only, pinned)
 ├── scripts/                # setup / check / test / inspection helpers
@@ -33,13 +42,20 @@ Two hard rules govern everything in this repo:
 │   ├── make_test_video.py      # Stage D1 synthetic test clip
 │   ├── run_inference.py        # Stage D run + timing / peak VRAM
 │   ├── inspect_results.py      # Stage E tracks.pt / geometry.pt validation
-│   └── check_determinism.py    # reproducibility of two runs
+│   ├── check_determinism.py    # reproducibility of two runs
+│   └── diagnose_vram.py        # per-stage CUDA memory diagnostics
 ├── tests/
-│   └── test_e2e.sh          # end-to-end smoke test
+│   ├── test_e2e.sh          # end-to-end smoke test
+│   ├── test_comfy_nodes.py  # node unit tests (fake worker, no GPU)
+│   ├── test_node_e2e.py     # node end-to-end test (real model)
+│   └── fake_worker.py       # stand-in worker used by the unit tests
 ├── test_data/              # test clips (git-ignored)
 ├── outputs/                # inference results (git-ignored)
 ├── docs/                   # reports
-│   └── standalone-test.md
+│   ├── standalone-test.md
+│   ├── vram-diagnostics.md
+│   └── comfyui-install.md       # installation guide for a ComfyUI user
+├── config.json.example     # optional runtime configuration
 ├── pixi.toml               # isolated environment definition
 ├── pixi.lock               # pinned environment lock
 ├── README.md
@@ -218,6 +234,10 @@ Results are never converted to JSON or any other lossy format.
 # end-to-end: env check -> synthetic clip -> inference -> validation
 pixi run bash tests/test_e2e.sh
 
+# ComfyUI node tests
+pixi run test-nodes        # unit tests against a fake worker (no GPU)
+pixi run test-nodes-e2e   # real inference through the Track node
+
 # reproducibility: two runs must agree within float32 tolerance
 pixi run python scripts/check_determinism.py outputs/det_a outputs/det_b
 ```
@@ -244,9 +264,48 @@ git-ignored.
 ## 9. Docs
 
 * [`docs/standalone-test.md`](docs/standalone-test.md) — versions, GPU, run
-  parameters, timings, VRAM, results and known limitations.
+  parameters, timings, VRAM, results and known limitations (ТЗ №1).
+* [`docs/vram-diagnostics.md`](docs/vram-diagnostics.md) — per-stage CUDA
+  memory measurements of the worker.
+* [`docs/comfyui-install.md`](docs/comfyui-install.md) — **installation guide
+  for a ComfyUI user**: environment, models, node installation, configuration,
+  first workflow and removal (ТЗ №2).
 
-## 10. Status / known limitations
+## 10. ComfyUI nodes
 
-See `docs/standalone-test.md` for the current state, including which acceptance
-criteria of ТЗ №1 are met and which are outstanding.
+The nodes are in `comfy_nodes/` and can be installed into any ComfyUI:
+
+```bash
+ln -s ~/trackeverything/comfy_nodes \
+      /path/to/ComfyUI/custom_nodes/comfy_nodes_trackeverything
+```
+
+| Node | Input | Output | GPU |
+|---|---|---|---|
+| **TrackEverything Track** | `images` (IMAGE batch), `num_iters` (3), `voxel_size` (0.02), `mem_efficient` (true) | `TRACK_DATA` | yes, in a worker process |
+| **TrackEverything Load Data** | `result_dir` (STRING) | `TRACK_DATA` | no |
+
+Both return the same `TRACK_DATA` handle (file references + metadata, never
+tensors), so a workflow can be rewired between them freely.
+
+**Isolation.** The ComfyUI process never imports `trackeverything`,
+`torch_scatter` or anything from the worker's Python 3.10 environment — an
+isolation guard in `comfy_nodes/config.py` fails loudly if that ever happens.
+The model runs in a separate process with its own CUDA context, so its VRAM
+is released completely when the run ends; ComfyUI's own models are never
+touched.
+
+**Configuration** (nothing is hard-coded to a user account):
+
+```bash
+export TRACKEVERYTHING_PROJECT_ROOT=~/trackeverything
+export TRACKEVERYTHING_WORKER_PYTHON=~/trackeverything/.pixi/envs/default/bin/python
+# or copy config.json.example to config.json in the project root
+```
+
+Full instructions: [`docs/comfyui-install.md`](docs/comfyui-install.md).
+
+## 11. Status / known limitations
+
+See `docs/standalone-test.md` for the ТЗ №1 state and
+`docs/vram-diagnostics.md` for the memory figures.

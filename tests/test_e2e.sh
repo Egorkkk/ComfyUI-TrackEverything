@@ -58,6 +58,13 @@ echo "=============================================================="
 pixi run python scripts/inspect_results.py "${OUT}" || fail "result validation failed"
 echo "OK"
 
+echo "=============================================================="
+echo " 5/5  ComfyUI node tests (fake worker + real worker)"
+echo "=============================================================="
+pixi run python tests/test_comfy_nodes.py || fail "node unit tests failed"
+pixi run python tests/test_node_e2e.py || fail "node end-to-end test failed"
+echo "OK"
+
 echo
 echo "=============================================================="
 echo " E2E TEST PASSED"
