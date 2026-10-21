@@ -1,0 +1,38 @@
+[workspace]
+name = "trackeverything"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# Isolated environment for TrackEverything standalone inference.
+# Fully independent from the production ComfyUI installation
+# (/home/egorkkk/ComfyUI) - no shared site-packages, no shared CUDA toolkit.
+#
+# Python 3.10 matches the version the upstream project is tested on
+# (see external/trackeverything/README.md "Installation").
+
+[dependencies]
+python = "3.10.*"
+pip = "*"
+
+# The upstream project additionally needs the deformable-attention CUDA
+# extension (libs/ops) for TRAINING only. Inference does not require it,
+# so it is deliberately not built here.
+
+# NOTE: opencv-python needs libGL.so.1, which is already present on the host.
+# The upstream project additionally needs the deformable-attention CUDA
+# extension (libs/ops) for TRAINING only. Inference does not require it,
+# so it is deliberately not built here.
+
+[tasks]
+# --- environment ------------------------------------------------------------
+env-info = { cmd = "python -c \"import sys,torch;print(sys.version);print('torch',torch.__version__,'cuda',torch.version.cuda)\"", description = "Print Python/Torch/CUDA versions" }
+
+# --- checks -----------------------------------------------------------------
+check-env = { cmd = "python scripts/check_env.py", description = "Verify torch/CUDA/torch_scatter/TrackEverything imports" }
+
+# --- inference --------------------------------------------------------------
+make-test-video = { cmd = "python scripts/make_test_video.py", description = "Generate the synthetic test clip" }
+infer = { cmd = "python -m trackeverything.demo_hf --video test_data/synthetic_16f.mp4 --output_dir outputs/standalone --geometry_backend pi3 --mode dense --num_iters 3 --voxel_size 0.02 --mem_efficient --max_frames 16", description = "Run standalone inference (Pi3 geometry backend)" }
+
+# --- verification -----------------------------------------------------------
+inspect-results = { cmd = "python scripts/inspect_results.py outputs/standalone", description = "Inspect tracks.pt / geometry.pt" }

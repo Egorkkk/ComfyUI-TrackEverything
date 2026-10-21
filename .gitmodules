@@ -1,0 +1,3 @@
+[submodule "external/trackeverything"]
+	path = external/trackeverything
+	url = https://github.com/ayushjain1144/trackeverything.git
