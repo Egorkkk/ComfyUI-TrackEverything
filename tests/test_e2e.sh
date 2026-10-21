@@ -59,10 +59,13 @@ pixi run python scripts/inspect_results.py "${OUT}" || fail "result validation f
 echo "OK"
 
 echo "=============================================================="
-echo " 5/5  ComfyUI node tests (fake worker + real worker)"
+echo " 5/5  ComfyUI node tests"
 echo "=============================================================="
 pixi run python tests/test_comfy_nodes.py || fail "node unit tests failed"
+pixi run python tests/test_save_data.py || fail "Save Data tests failed"
+pixi run python tests/test_visualize.py || fail "Visualize tests failed"
 pixi run python tests/test_node_e2e.py || fail "node end-to-end test failed"
+pixi run python tests/test_visualize_e2e.py || fail "visualize end-to-end test failed"
 echo "OK"
 
 echo
