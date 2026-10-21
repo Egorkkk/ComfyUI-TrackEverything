@@ -74,7 +74,6 @@ class TestNodeEndToEnd(unittest.TestCase):
             output_dir=out_dir,
         )
         elapsed = time.time() - started
-
         self.assertIsInstance(track_data, TrackData)
         self.assertTrue(track_data.exists())
 
@@ -126,6 +125,36 @@ class TestNodeEndToEnd(unittest.TestCase):
         log_text = log.read_text()
         self.assertIn("worker", log_text)
         self.assertIn("--frames-dir", log_text)
+
+
+    def test_the_inference_prints_a_stage_report(self):
+        """The worker must report its stages to the ComfyUI console."""
+        import contextlib
+        import io
+
+        images = load_synthetic_clip(self.video, max_frames=8)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bridge.run_track(
+                self.config,
+                images,
+                output_dir=self.tmp / "result_report",
+            )
+        text = buffer.getvalue()
+
+        self.assertIn("TrackEverything - standalone inference", text)
+        self.assertIn("[1/4] loading the TrackEverything checkpoint", text)
+        self.assertIn("[2/4] loading the pi3 geometry backend", text)
+        self.assertIn("[3/4] estimating geometry and tracking points", text)
+        self.assertIn("[4/4] saving tracks.pt and geometry.pt", text)
+        # the geometry / tracking sub-stages come from the upstream messages
+        self.assertIn("-> geometry estimation", text)
+        self.assertIn("-> tracking (dense)", text)
+        # the summary carries the peak VRAM
+        self.assertIn("peak VRAM", text)
+        # the worker log keeps the same report
+        log = (self.tmp / "result_report" / "worker.log").read_text()
+        self.assertIn("[3/4] estimating geometry and tracking points", log)
 
 
 if __name__ == "__main__":

@@ -244,6 +244,55 @@ class TestWorkerExecution(TempDirCase):
             bridge.run_worker(cfg, argv, out, timeout=3)
         self.assertIn("timed out", str(ctx.exception))
 
+    def test_worker_output_is_streamed_to_the_console(self):
+        """The worker's report must reach the ComfyUI console live."""
+        import contextlib
+        import io
+
+        cfg = make_config(self.tmp)
+        out = self.tmp / "out"
+        argv = bridge.build_worker_argv(cfg, self.tmp / "frames", out)
+        (self.tmp / "frames").mkdir(parents=True, exist_ok=True)
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            result = bridge.run_worker(cfg, argv, out)
+        self.assertEqual(result.returncode, 0)
+        streamed = buffer.getvalue()
+        self.assertIn("fake-worker", streamed)
+        # the output is also kept in the log file
+        self.assertIn("fake-worker", result.log_path.read_text())
+
+    def test_worker_errors_are_streamed_with_a_marker(self):
+        import contextlib
+        import io
+
+        cfg = make_config(self.tmp)
+        out = self.tmp / "out"
+        argv = bridge.build_worker_argv(cfg, self.tmp / "frames", out)
+        argv.append("--fail")
+        (self.tmp / "frames").mkdir(parents=True, exist_ok=True)
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            result = bridge.run_worker(cfg, argv, out)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[error]", buffer.getvalue())
+
+    def test_console_streaming_can_be_disabled(self):
+        import contextlib
+        import io
+
+        cfg = make_config(self.tmp)
+        out = self.tmp / "out"
+        argv = bridge.build_worker_argv(cfg, self.tmp / "frames", out)
+        (self.tmp / "frames").mkdir(parents=True, exist_ok=True)
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bridge.run_worker(cfg, argv, out, stream_console=False)
+        self.assertEqual(buffer.getvalue(), "")
+
     def test_missing_worker_binary_is_reported(self):
         cfg = make_config(self.tmp)
         cfg.worker_python = Path("/nonexistent/python")

@@ -386,6 +386,35 @@ class TestRendering(VisualizeCase):
         self.assertFalse(report["cuda_initialized"])
         self.assertNotIn("model", json.dumps(report["parameters"]))
 
+    def test_the_worker_prints_a_stage_report(self):
+        """The worker must report its stages to the console."""
+        import contextlib
+        import io
+
+        sys.path.insert(0, str(PROJECT_ROOT / "worker"))
+        import visualize as viz
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = viz.main([
+                "--result-dir", str(self.result),
+                "--output-dir", str(self.tmp / "out_report"),
+                "--max-points", "5000",
+            ])
+        self.assertEqual(code, 0)
+        text = buffer.getvalue()
+
+        self.assertIn("TrackEverything - visualization", text)
+        self.assertIn("[1/4] loading tracks.pt and geometry.pt", text)
+        self.assertIn("[2/4] preparing the scene", text)
+        self.assertIn("[3/4] rendering the tracks", text)
+        self.assertIn("[4/4] writing the PNG frames", text)
+        # the parameters are echoed in the banner
+        self.assertIn("max points", text)
+        # and the summary carries the result
+        self.assertIn("cuda", text)
+        self.assertIn("not used", text)
+
 
 def build_many(directory: Path, num_tracks: int = 200) -> Path:
     """A result set with many tracks spread over the image."""
