@@ -350,9 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         names = []
         for index, frame in enumerate(frames):
             name = f"vis_{index:06d}.png"
-            Image.fromarray(frame.astype(np.uint8), mode="RGB").save(
-                output_dir / name
-            )
+            Image.fromarray(frame.astype(np.uint8)).save(output_dir / name)
             names.append(name)
 
         report["results"] = {
