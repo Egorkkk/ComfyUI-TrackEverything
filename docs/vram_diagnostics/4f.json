@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-10-21T22:36:18",
+  "host": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "python": "3.10.22",
+  "executable": "/home/ocdev/trackeverything/.pixi/envs/default/bin/python",
+  "torch": "2.8.0+cu129",
+  "torch_cuda_build": "12.9",
+  "device_name": "NVIDIA GeForce RTX 4060 Ti",
+  "device_total_mib": 16379,
+  "pid": 19144,
+  "parameters": {
+    "model": "katefgroup/TrackEverything",
+    "geometry_backend": "pi3",
+    "num_iters": 3,
+    "voxel_size": 0.02,
+    "mode": "dense",
+    "mem_efficient": true,
+    "max_frames": 4,
+    "frames_dir": "/home/ocdev/trackeverything/outputs/_vram_frames",
+    "input_size_wh": [
+      384,
+      256
+    ],
+    "input_kind": "synthetic_clip"
+  },
+  "stages": {
+    "1. load TrackEverything": {
+      "max_memory_allocated_bytes": 240066048,
+      "max_memory_reserved_bytes": 266338304,
+      "memory_allocated_bytes": 240066048,
+      "memory_reserved_bytes": 266338304,
+      "active_bytes": 240066048,
+      "peak_active_bytes": 240066048,
+      "num_alloc_retries": 0,
+      "num_ooms": 0,
+      "segment_count": 28,
+      "largest_allocation_bytes": 240066048
+    },
+    "2. load Pi3 geometry": {
+      "max_memory_allocated_bytes": 4075260928,
+      "max_memory_reserved_bytes": 4108320768,
+      "memory_allocated_bytes": 4075260928,
+      "memory_reserved_bytes": 4108320768,
+      "active_bytes": 4075260928,
+      "peak_active_bytes": 4075260928,
+      "num_alloc_retries": 0,
+      "num_ooms": 0,
+      "segment_count": 262,
+      "largest_allocation_bytes": 4075260928
+    },
+    "3. inference (dense)": {
+      "max_memory_allocated_bytes": 6197243392,
+      "max_memory_reserved_bytes": 6404702208,
+      "memory_allocated_bytes": 4100688896,
+      "memory_reserved_bytes": 4917821440,
+      "active_bytes": 4100688896,
+      "peak_active_bytes": 6197243392,
+      "num_alloc_retries": 0,
+      "num_ooms": 0,
+      "segment_count": 280,
+      "largest_allocation_bytes": 6197243392
+    },
+    "4. save outputs": {
+      "max_memory_allocated_bytes": 4106190336,
+      "max_memory_reserved_bytes": 4917821440,
+      "memory_allocated_bytes": 4100688896,
+      "memory_reserved_bytes": 4137680896,
+      "active_bytes": 4100688896,
+      "peak_active_bytes": 4106190336,
+      "num_alloc_retries": 0,
+      "num_ooms": 0,
+      "segment_count": 267,
+      "largest_allocation_bytes": 4106190336
+    }
+  },
+  "baseline": {
+    "max_memory_allocated_bytes": 0,
+    "max_memory_reserved_bytes": 0,
+    "memory_allocated_bytes": 0,
+    "memory_reserved_bytes": 0,
+    "active_bytes": 0,
+    "peak_active_bytes": 0,
+    "num_alloc_retries": 0,
+    "num_ooms": 0,
+    "segment_count": 0,
+    "largest_allocation_bytes": 0
+  },
+  "device_level": {
+    "baseline_used_mib": 1156.38,
+    "peak_used_mib": 7338.38,
+    "min_free_mib": 9041.0,
+    "samples": 116
+  },
+  "nvml": {
+    "available": true,
+    "device_name": "NVIDIA GeForce RTX 4060 Ti",
+    "device_total_mib": 16380,
+    "device_used_mib": 5126,
+    "device_free_mib": 11253,
+    "compute_processes": [
+      {
+        "pid": 19144,
+        "used_gpu_memory_mb": null
+      },
+      {
+        "pid": 4702,
+        "used_gpu_memory_mb": null
+      },
+      {
+        "pid": 7290,
+        "used_gpu_memory_mb": null
+      }
+    ],
+    "per_process_memory_supported": false,
+    "note": "WSL2 does not expose per-process GPU memory; usedGpuMemory is None for every process."
+  },
+  "timings": {
+    "load_tracker_seconds": 2.043,
+    "load_geometry_seconds": 7.385,
+    "inference_seconds": 1.944,
+    "save_seconds": 0.044
+  },
+  "results": {
+    "num_tracks": 2354,
+    "num_frames": 4,
+    "working_resolution_hw": [
+      384,
+      512
+    ],
+    "norm_factor": 1.2001932859420776
+  }
+}
