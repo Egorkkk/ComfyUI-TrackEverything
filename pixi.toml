@@ -66,6 +66,7 @@ test-save-data = { cmd = "python tests/test_save_data.py", description = "Save D
 test-visualize = { cmd = "python tests/test_visualize.py", description = "Visualize node tests" }
 test-visualize-e2e = { cmd = "python tests/test_visualize_e2e.py", description = "Visualize end-to-end test on the standalone results" }
 test-console = { cmd = "python tests/test_console.py", description = "Console reporting tests" }
+test-select = { cmd = "python tests/test_select_object.py", description = "Select Object node tests" }
 test-curope = { cmd = "python tests/test_curope.py", description = "cuRoPE2D (croco) CUDA kernel tests" }
 build-curope = { cmd = "bash scripts/build_curope.sh", description = "Build and install the cuRoPE2D CUDA kernel" }
 check-curope = { cmd = "python scripts/check_curope.py", description = "Verify the cuRoPE2D installation and its numerics" }
