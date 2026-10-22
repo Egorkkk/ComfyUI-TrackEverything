@@ -34,10 +34,12 @@ from .types import (
     GEOMETRY_FILENAME,
     METADATA_FILENAME,
     SCHEMA_VERSION,
+    SELECTION_FILENAME,
     TRACKS_FILENAME,
     WORKER_LOG_FILENAME,
     WORKER_REPORT_FILENAME,
     TrackData,
+    TrackSelection,
 )
 
 
@@ -819,6 +821,7 @@ def save_result(
     save_mode: str = "reference",
     filename_prefix: str = "trackeverything",
     output_root: Optional[Path] = None,
+    selection: Optional["TrackSelection"] = None,
 ) -> tuple[TrackData, str]:
     """Persist a result set.
 
@@ -829,7 +832,8 @@ def save_result(
     ``copy``
         Copy ``tracks.pt``, ``geometry.pt``, ``metadata.json`` and the worker
         log into a **new** directory under the output root. The ``.pt`` files
-        are copied byte for byte - no tensor is converted.
+        are copied byte for byte - no tensor is converted. A selection, if
+        there is one, is copied along with it.
 
     Returns the (possibly new) :class:`TrackData` and a human readable message.
     """
@@ -868,6 +872,11 @@ def save_result(
             f"TrackEverything result referenced (not copied): {source}  "
             f"[{track_data.num_tracks} tracks, {track_data.num_frames} frames]"
         )
+        if selection is not None:
+            message += (
+                f"; selection of {selection.count} tracks: "
+                f"{selection.selection_path}"
+            )
         print(message)
         return track_data, message
 
@@ -894,6 +903,19 @@ def save_result(
         if source_report.is_file():
             shutil.copy2(source_report, staging / WORKER_REPORT_FILENAME)
 
+        # --- the selection, if there is one ------------------------------
+        selection_metadata = None
+        if selection is not None:
+            source_selection = Path(selection.selection_path)
+            if not source_selection.is_file():
+                raise TrackEverythingError(
+                    f"Cannot save: the selection {source_selection} is missing."
+                )
+            shutil.copy2(source_selection, staging / SELECTION_FILENAME)
+            selection_metadata = json.loads(
+                source_selection.read_text(encoding="utf-8")
+            )
+
         # --- metadata: follow the copy, keep the provenance ---------------
         metadata = read_metadata(source)
         source_abs = str(source.resolve())
@@ -909,6 +931,33 @@ def save_result(
             "files_are_byte_identical": True,
         }
         metadata.setdefault("files", {})["worker_log"] = WORKER_LOG_FILENAME
+
+        if selection_metadata is not None:
+            # the selection travels with the result - its paths have to follow
+            # the copy, and the provenance of the selection is kept
+            selection_metadata = _rewrite_paths(
+                selection_metadata, str(selection.source_result_dir),
+                destination_abs,
+            )
+            selection_metadata["source"]["result_dir"] = destination_abs
+            selection_metadata["copied_with"] = {
+                "result_dir": destination_abs,
+                "copied_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "original_selection_dir": selection.selection_dir,
+            }
+            (staging / SELECTION_FILENAME).write_text(
+                json.dumps(selection_metadata, indent=2), encoding="utf-8"
+            )
+            metadata["files"]["selection"] = SELECTION_FILENAME
+            metadata["selection"] = {
+                "num_selected": selection_metadata.get("num_selected"),
+                "fingerprint": selection_metadata.get("source", {}).get("fingerprint"),
+                "file": SELECTION_FILENAME,
+                "note": (
+                    "the selection is a list of stable track ids of this result - "
+                    "the full track set is stored unchanged"
+                ),
+            }
 
         (staging / METADATA_FILENAME).write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
@@ -932,6 +981,8 @@ def save_result(
         f"TrackEverything result copied to {destination}  "
         f"[{track_data.num_tracks} tracks, {track_data.num_frames} frames]"
     )
+    if selection is not None:
+        message += f"; selection of {selection.count} tracks copied"
     print(message)
 
     copied_metadata = json.loads(
@@ -949,6 +1000,7 @@ def build_visualizer_argv(
     output_dir: Path,
     *,
     frames_dir: Optional[Path] = None,
+    selection_file: Optional[Path] = None,
     max_points: int = 5000,
     trail_length: int = 8,
     visibility_threshold: float = 0.5,
@@ -971,6 +1023,8 @@ def build_visualizer_argv(
     ]
     if frames_dir is not None:
         argv += ["--frames-dir", str(frames_dir)]
+    if selection_file is not None:
+        argv += ["--selection-file", str(selection_file)]
     if width and height:
         argv += ["--width", str(int(width)), "--height", str(int(height))]
     return argv
@@ -993,11 +1047,170 @@ def _read_png_batch(directory: Path) -> "np.ndarray":
     return np.stack(frames)
 
 
+# ---------------------------------------------------------------------------
+# object selection
+# ---------------------------------------------------------------------------
+def validate_mask_batch(masks: Any) -> "np.ndarray":
+    """Validate a ComfyUI ``MASK`` batch and threshold it.
+
+    A ComfyUI ``MASK`` is a ``(T, H, W)`` float tensor. The thresholding is
+    done here so that the masks can be handed over to the worker as exact
+    binary PNG frames (no precision is lost on the way).
+    """
+    import numpy as np
+
+    if masks is None:
+        raise TrackEverythingError("No masks received (input 'masks' is None).")
+
+    arr = _to_numpy(masks)
+    if arr.dtype != np.uint8 and not np.issubdtype(arr.dtype, np.floating):
+        raise TrackEverythingError(
+            f"Unsupported mask dtype {arr.dtype}; expected float or uint8."
+        )
+
+    if arr.ndim == 2:
+        arr = arr[None, ...]
+    if arr.ndim != 3:
+        raise TrackEverythingError(
+            f"Expected a MASK batch of shape (T, H, W), got {arr.shape}."
+        )
+    if arr.shape[0] < 1:
+        raise TrackEverythingError("The MASK batch is empty (0 frames).")
+    if arr.shape[1] < 1 or arr.shape[2] < 1:
+        raise TrackEverythingError("The MASK frames are empty.")
+    return arr
+
+
+def _write_mask_frames(masks: "np.ndarray", threshold: float, directory: Path) -> int:
+    """Write the thresholded masks as binary PNG frames."""
+    import numpy as np
+    from PIL import Image
+
+    directory.mkdir(parents=True, exist_ok=True)
+    for index, frame in enumerate(masks):
+        binary = (frame >= threshold).astype(np.uint8) * 255
+        Image.fromarray(binary, mode="L").save(directory / f"mask_{index:06d}.png")
+    return int(masks.shape[0])
+
+
+def _unique_selection_dir(root: Path) -> Path:
+    """A fresh directory for the selection (never overwriting an old one)."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    candidate = root / f"trackeverything_selection_{stamp}"
+    index = 1
+    while candidate.exists():
+        candidate = root / f"trackeverything_selection_{stamp}_{index:02d}"
+        index += 1
+    return candidate
+
+
+def run_selection(
+    cfg: Config,
+    track_data: TrackData,
+    masks: Any,
+    *,
+    mask_threshold: float = 0.5,
+    erode_pixels: int = 2,
+    min_inside_ratio: float = 0.6,
+    min_support_frames: int = 2,
+    timeout: Optional[float] = None,
+    output_dir: Optional[Path] = None,
+) -> TrackSelection:
+    """Select the tracks of one object using a sequence of segmentation masks."""
+    cfg.validate()
+
+    result_dir = Path(track_data.result_dir)
+    if not (result_dir / TRACKS_FILENAME).is_file():
+        raise TrackEverythingError(
+            f"Cannot select: {result_dir} is missing {TRACKS_FILENAME}."
+        )
+
+    mask_batch = validate_mask_batch(masks)
+
+    expected = track_data.num_frames
+    if expected is not None and mask_batch.shape[0] != int(expected):
+        raise TrackEverythingError(
+            f"The MASK batch has {mask_batch.shape[0]} frames but the tracks "
+            f"cover {expected} frames. They must match - no temporal "
+            f"interpolation is done."
+        )
+
+    selection_dir = Path(output_dir) if output_dir else _unique_selection_dir(
+        Path(cfg.output_root)
+    )
+    selection_dir.mkdir(parents=True, exist_ok=True)
+
+    tmp_root = Path(tempfile.mkdtemp(prefix="trackeverything_select_"))
+    masks_dir = tmp_root / "masks"
+
+    try:
+        written = _write_mask_frames(mask_batch, mask_threshold, masks_dir)
+        print(
+            f"[TrackEverything] selecting {written} masks "
+            f"({mask_batch.shape[2]}x{mask_batch.shape[1]}) "
+            f"against {track_data.num_tracks} tracks"
+        )
+
+        argv = [
+            str(cfg.worker_python),
+            str(cfg.project_root / "worker" / "select_object.py"),
+            "--result-dir", str(result_dir),
+            "--masks-dir", str(masks_dir),
+            "--output-dir", str(selection_dir),
+            "--mask-threshold", str(float(mask_threshold)),
+            "--erode-pixels", str(int(erode_pixels)),
+            "--min-inside-ratio", str(float(min_inside_ratio)),
+            "--min-support-frames", str(int(min_support_frames)),
+        ]
+
+        worker = run_worker(cfg, argv, selection_dir, timeout=timeout)
+        if worker.returncode != 0:
+            raise TrackEverythingError(
+                "The TrackEverything selection worker failed "
+                f"(exit code {worker.returncode}).\n"
+                f"Command: {' '.join(argv)}\n"
+                f"Log: {worker.log_path}\n"
+                "--- last output ---\n"
+                f"{_tail(worker.stdout + worker.stderr)}"
+            )
+
+        selection_path = selection_dir / SELECTION_FILENAME
+        if not selection_path.is_file():
+            raise TrackEverythingError(
+                f"The selection worker did not produce {selection_path}."
+            )
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+
+        source = selection.get("source", {})
+        token_ids = tuple(int(i) for i in selection.get("selected_token_ids", []))
+
+        print(
+            f"[TrackEverything] selected {len(token_ids)} of "
+            f"{source.get('num_tracks')} tracks -> {selection_dir}"
+        )
+
+        return TrackSelection(
+            selection_dir=str(selection_dir),
+            selection_path=str(selection_path),
+            source_result_dir=str(source.get("result_dir", result_dir)),
+            source_tracks_path=str(source.get("tracks_path", result_dir / TRACKS_FILENAME)),
+            fingerprint=str(source.get("fingerprint", "")),
+            token_ids=token_ids,
+            count=len(token_ids),
+            parameters=selection.get("parameters", {}),
+            metadata=selection,
+        )
+
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
 def visualize_result(
     cfg: Config,
     track_data: TrackData,
     *,
     images: Any = None,
+    selection: Optional["TrackSelection"] = None,
     max_points: int = 5000,
     trail_length: int = 8,
     visibility_threshold: float = 0.5,
@@ -1010,6 +1223,9 @@ def visualize_result(
     The rendering happens in the isolated worker (CPU only, no models). The
     frames come back through PNG files and are turned into a float32
     ``(T, H, W, 3)`` tensor in ``[0, 1]``.
+
+    When a ``selection`` is given, only the tracks it lists are drawn - the
+    ``max_points`` limit is applied *after* the selection.
     """
     cfg.validate()
 
@@ -1023,6 +1239,7 @@ def visualize_result(
     tmp_root = Path(tempfile.mkdtemp(prefix="trackeverything_vis_"))
     frames_dir = tmp_root / "frames"
     source_frames = None
+    selection_file = None
 
     try:
         if images is not None:
@@ -1036,16 +1253,23 @@ def visualize_result(
             write_frames(batch, frames_dir)
             source_frames = batch
 
+        if selection is not None:
+            selection_file = tmp_root / "selection.json"
+            shutil.copy2(selection.selection_path, selection_file)
+
         out_dir = tmp_root / "rendered"
         print(
             f"[TrackEverything] rendering {track_data.num_tracks} tracks"
             + (f" over {source_frames.num_frames} frames" if source_frames else "")
+            + (f", selection of {selection.count} tracks"
+               if selection is not None else "")
         )
         argv = build_visualizer_argv(
             cfg,
             result_dir,
             out_dir,
             frames_dir=frames_dir if source_frames is not None else None,
+            selection_file=selection_file,
             max_points=max_points,
             trail_length=trail_length,
             visibility_threshold=visibility_threshold,

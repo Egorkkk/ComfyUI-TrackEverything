@@ -13,6 +13,7 @@ from __future__ import annotations
 from .bridge import (
     TrackEverythingError,
     load_result_dir,
+    run_selection,
     run_track,
     save_result,
     visualize_result,
@@ -23,24 +24,28 @@ from .nodes import (
     NODE_DISPLAY_NAME_MAPPINGS,
     TrackEverythingLoadData,
     TrackEverythingSaveData,
+    TrackEverythingSelectObject,
     TrackEverythingTrack,
     TrackEverythingVisualize,
 )
-from .types import TrackData
+from .types import TrackData, TrackSelection
 
 __all__ = [
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
     "TrackEverythingLoadData",
     "TrackEverythingSaveData",
+    "TrackEverythingSelectObject",
     "TrackEverythingTrack",
     "TrackEverythingVisualize",
     "TrackData",
+    "TrackSelection",
     "TrackEverythingError",
     "ConfigurationError",
     "Config",
     "assert_isolated",
     "load_result_dir",
+    "run_selection",
     "run_track",
     "save_result",
     "visualize_result",
