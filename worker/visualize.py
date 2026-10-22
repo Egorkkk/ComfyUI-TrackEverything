@@ -58,6 +58,7 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 from console import Console, human_bytes, install_upstream_logging  # noqa: E402
+from trackdata import fingerprint, load_torch_dict, tracks_metadata  # noqa: E402
 
 #: The upstream sentinel for "missing / not-yet-existing" trajectory entries.
 SENTINEL = -1000.0
@@ -73,15 +74,6 @@ def _bootstrap_path() -> None:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-def load_torch_dict(path: Path) -> dict:
-    import torch
-
-    try:
-        return torch.load(path, map_location="cpu", weights_only=True)
-    except Exception:
-        return torch.load(path, map_location="cpu", weights_only=False)
-
-
 def scale_intrinsics(intrinsics, from_hw: tuple[int, int], to_hw: tuple[int, int]):
     """Rescale the intrinsics between two resolutions.
 
@@ -194,6 +186,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--background-opacity", type=float, default=0.7)
     parser.add_argument("--point-radius", type=int, default=2)
     parser.add_argument("--linewidth", type=int, default=1)
+    parser.add_argument("--selection-file", default=None,
+                        help="optional selection.json - only the listed track ids "
+                             "are rendered")
     args = parser.parse_args(argv)
 
     _bootstrap_path()
@@ -283,6 +278,40 @@ def main(argv: list[str] | None = None) -> int:
         src_x = tracks["src_x"].detach().cpu()
 
         n_tracks, n_frames = int(coords.shape[0]), int(coords.shape[1])
+
+        # --- an optional selection restricts the tracks that are drawn ----
+        selected_ids = None
+        if args.selection_file:
+            selection = json.loads(
+                Path(args.selection_file).read_text(encoding="utf-8")
+            )
+            source = selection.get("source", {})
+            expected_fp = source.get("fingerprint")
+            actual_fp = fingerprint(tracks)
+            if expected_fp and expected_fp != actual_fp:
+                raise ValueError(
+                    "the selection belongs to a different track set: "
+                    f"fingerprint {expected_fp} != {actual_fp}"
+                )
+            selected_ids = [int(i) for i in selection.get("selected_token_ids", [])]
+            keep = [i for i in selected_ids if 0 <= i < n_tracks]
+            if len(keep) != len(selected_ids):
+                raise ValueError(
+                    f"the selection lists {len(selected_ids)} ids but the track "
+                    f"set only has {n_tracks}"
+                )
+            if keep:
+                index = torch.tensor(keep, dtype=torch.int64)
+                coords = coords[index]
+                visibs = visibs[index]
+                dyn_logits = dyn_logits[index]
+                src_time = src_time[index]
+                src_y = src_y[index]
+                src_x = src_x[index]
+                n_tracks = len(keep)
+            console.detail(
+                f"selection: {len(keep)} of the original tracks are rendered"
+            )
 
         intrinsics = geometry["intrinsics"].detach().float().cpu()
         extrinsics = geometry["extrinsics"].detach().float().cpu()
