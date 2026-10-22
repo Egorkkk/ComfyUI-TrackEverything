@@ -374,6 +374,65 @@ up with the original pixels). Without `images`, the background is black and
 the resolution is the working resolution recorded in the metadata
 (e.g. 512×384).
 
+### 7.3 Selecting one object (post-processing)
+
+`TrackEverything Select Object` turns a sequence of segmentation masks into a
+**list of stable track ids** of one object. It is pure post-processing: no
+model is loaded, no inference is run, the GPU is not touched and the original
+`tracks.pt` is never modified.
+
+```
+Video ──▶ TrackEverything Track ──▶ TRACK_DATA ─┐
+                                                  ├─▶ TrackEverything Select Object ──▶ TRACK_SELECTION
+Video ──▶ SAM3 (or any segmenter) ──▶ MASK ───────┘
+
+TRACK_DATA ────┐
+               ├─▶ TrackEverything Visualize ──▶ Preview Image
+TRACK_SELECTION ┘
+```
+
+1. Run the inference workflow (§7.1) or load an existing result with
+   **TrackEverything Load Data**.
+2. Produce the masks with a segmentation node (SAM2/SAM3 or any other) — the
+   mask batch must cover **exactly the same frames** as the tracks; no
+   temporal interpolation is done and a mismatch is reported.
+3. Add **TrackEverything Select Object**, connect `TRACK_DATA` and the `MASK`
+   batch.
+4. Connect its `selection` output to the optional `selection` input of
+   **TrackEverything Visualize** — only the selected tracks are drawn and the
+   `max_points` limit is applied *after* the selection.
+
+**Parameters**
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `mask_threshold` | 0.5 | a mask pixel above this value counts as masked |
+| `erode_pixels` | 2 | shrink the mask by this many pixels (in the resolution of the original frames) to drop the border of the object |
+| `min_inside_ratio` | 0.6 | a track is selected when it is inside the mask in at least this fraction of the frames it was observed in |
+| `min_support_frames` | 2 | ... and in at least this many frames |
+
+**Saving and reusing a selection**
+
+The selection is written to its own directory under ComfyUI's output
+directory:
+
+```
+<ComfyUI output>/trackeverything_selection_<timestamp>/selection.json
+```
+
+* **Save Data** with `save_mode = copy` copies the selection together with the
+  result (`selection.json` next to `tracks.pt`) and rewrites the paths so the
+  copy refers to itself. With `save_mode = reference` the selection is only
+  reported.
+* The full track set is always saved unchanged — the selection is only a list
+  of identifiers, **not** a new inference.
+* The selection records the **fingerprint** of the track set it was made for.
+  Connecting it to a different result is rejected with a clear message instead
+  of silently drawing the wrong tracks.
+* A saved selection can be re-used later: load the result with
+  **TrackEverything Load Data** and connect the selection file to the
+  `selection` input of **TrackEverything Visualize**.
+
 ## 8. Check the result
 
 ```bash
@@ -429,8 +488,9 @@ Verify the four nodes are present:
 |---|---|---|
 | TrackEverything Track | TrackEverything | input `images`, output `TRACK_DATA` |
 | TrackEverything Load Data | TrackEverything | input `result_dir`, output `TRACK_DATA` |
-| TrackEverything Save Data | TrackEverything | `OUTPUT_NODE`, inputs `track_data` / `save_mode` / `filename_prefix` |
-| TrackEverything Visualize | TrackEverything | output `images` (socket type `IMAGE`) |
+| TrackEverything Save Data | TrackEverything | `OUTPUT_NODE`, inputs `track_data` / `save_mode` / `filename_prefix`, optional `selection` |
+| TrackEverything Select Object | TrackEverything | inputs `track_data` / `masks`, outputs `TRACK_SELECTION` / `INT` / `STRING` |
+| TrackEverything Visualize | TrackEverything | output `images` (socket type `IMAGE`), optional `images` / `selection` |
 
 A quick self-test of the installation (runs in your own environment, does not
 touch the ComfyUI process):
@@ -442,6 +502,7 @@ pixi run python scripts/check_curope.py          # the CUDA RoPE kernel
 pixi run python tests/test_comfy_nodes.py        # nodes (fake worker, no GPU)
 pixi run python tests/test_save_data.py          # Save Data
 pixi run python tests/test_visualize.py          # Visualize
+pixi run python tests/test_select_object.py      # Select Object
 pixi run python tests/test_curope.py             # the cuRoPE2D kernel
 ```
 

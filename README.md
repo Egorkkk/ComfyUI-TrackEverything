@@ -25,14 +25,16 @@ Two hard rules govern everything in this repo:
 ~/trackeverything/
 ├── comfy_nodes/            # ComfyUI nodes (installed into custom_nodes/)
 │   ├── __init__.py             # NODE_CLASS_MAPPINGS / NODE_DISPLAY_NAME_MAPPINGS
-│   ├── nodes.py                # Track + Load Data + Save Data + Visualize
+│   ├── nodes.py                # the five node classes
 │   ├── bridge.py               # IMAGE batch -> PNG -> worker -> TRACK_DATA
 │   ├── config.py               # runtime path resolution + isolation guard
-│   └── types.py                # the TRACK_DATA payload
+│   └── types.py                # the TRACK_DATA / TRACK_SELECTION payloads
 ├── worker/                 # runs inside the isolated environment
 │   ├── __init__.py
 │   ├── runner.py               # calls the original upstream demo_hf
 │   ├── visualize.py            # calls the original upstream renderer (CPU)
+│   ├── select_object.py        # selects the tracks of one object (CPU)
+│   ├── trackdata.py            # loading + the fingerprint of a track set
 │   └── console.py              # stage reporting, progress bars and rates
 ├── external/
 │   └── trackeverything/    # upstream, Git submodule (read-only, pinned)
@@ -57,6 +59,7 @@ Two hard rules govern everything in this repo:
 │   ├── test_save_data.py    # Save Data node tests
 │   ├── test_visualize.py    # Visualize node tests (synthetic scene)
 │   ├── test_visualize_e2e.py# Visualize end-to-end test (standalone results)
+│   ├── test_select_object.py# Select Object node tests + real-data E2E
 │   └── fake_worker.py       # stand-in worker used by the unit tests
 ├── test_data/              # test clips (git-ignored)
 ├── outputs/                # inference results (git-ignored)
@@ -276,6 +279,7 @@ pixi run bash tests/test_e2e.sh
 # ComfyUI node tests
 pixi run test-console      # console reporting
 pixi run test-curope      # the cuRoPE2D CUDA kernel
+pixi run test-select      # the Select Object node
 pixi run test-nodes        # unit tests against a fake worker (no GPU)
 pixi run test-nodes-e2e   # real inference through the Track node
 pixi run test-save-data   # Save Data node
@@ -330,11 +334,12 @@ ln -s ~/trackeverything/comfy_nodes \
 |---|---|---|---|
 | **TrackEverything Track** | `images` (IMAGE batch), `num_iters` (3), `voxel_size` (0.02), `mem_efficient` (true) | `TRACK_DATA` | yes, in a worker process |
 | **TrackEverything Load Data** | `result_dir` (STRING) | `TRACK_DATA` | no |
-| **TrackEverything Save Data** | `track_data`, `save_mode` (`reference`/`copy`), `filename_prefix` | `TRACK_DATA` | no (`OUTPUT_NODE`) |
-| **TrackEverything Visualize** | `track_data`, `max_points` (5000), `trail_length` (8), `visibility_threshold` (0.5), `dynamic_threshold` (0.5), `background_opacity` (0.7), optional `images` (IMAGE batch) | `images` — socket type **`IMAGE`** | no |
+| **TrackEverything Save Data** | `track_data`, `save_mode` (`reference`/`copy`), `filename_prefix`, optional `selection` | `TRACK_DATA` | no (`OUTPUT_NODE`) |
+| **TrackEverything Select Object** | `track_data`, `masks` (MASK), `mask_threshold` (0.5), `erode_pixels` (2), `min_inside_ratio` (0.6), `min_support_frames` (2) | `TRACK_SELECTION`, `INT`, `STRING` | no |
+| **TrackEverything Visualize** | `track_data`, `max_points` (5000), `trail_length` (8), `visibility_threshold` (0.5), `dynamic_threshold` (0.5), `background_opacity` (0.7), optional `images` (IMAGE batch), optional `selection` | `images` — socket type **`IMAGE`** | no |
 
-All four nodes exchange the same `TRACK_DATA` handle (file references +
-metadata, never tensors), so a workflow can be rewired freely between them.
+All nodes exchange file references plus metadata, never tensors (`TRACK_DATA`,
+`TRACK_SELECTION`), so a workflow can be rewired freely between them.
 
 **Two minimal workflows**
 
@@ -349,6 +354,30 @@ Visualization (no repeated inference):
 For the visualization workflow, connect the original `IMAGE` batch to the
 optional `images` input of the Visualize node to draw the tracks on top of the
 footage.
+
+**Selecting one object** — post-processing of a finished tracking, no new
+inference:
+
+```
+Video ──▶ TrackEverything Track ──▶ TRACK_DATA ─┐
+                                                  ├─▶ TrackEverything Select Object ──▶ TRACK_SELECTION
+Video ──▶ SAM3 (or any segmenter) ──▶ MASK ───────┘
+
+TRACK_DATA ────┐
+               ├─▶ TrackEverything Visualize ──▶ Preview Image
+TRACK_SELECTION ┘
+```
+
+The masks must cover exactly the same frames as the tracks. The result is a
+**list of stable track ids** — the original track set is not modified and no
+model is loaded. `TrackEverything Visualize` draws only those tracks
+(`max_points` is applied *after* the selection), and `TrackEverything Save Data`
+copies the selection along with the result.
+
+The selection is stored in its own directory under ComfyUI's output directory
+(`trackeverything_selection_<timestamp>/selection.json`) and records the
+**fingerprint** of the track set it was made for — a selection of a different
+inference is rejected instead of silently producing wrong tracks.
 
 **Socket types.** The Visualize node declares its output with ComfyUI's
 standard `IMAGE` type (the display name is still `images`). That is what
